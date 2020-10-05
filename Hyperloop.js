@@ -139,6 +139,9 @@ class Game {
         document.body.appendChild(this.canvas);
         this.updateCanvasSize();
         window.addEventListener("resize", () => this.updateCanvasSize());
+        canvas.addEventListener("contextmenu", event => {
+            event.preventDefault();
+        });
         // Use Alt+Enter to toggle fullscreen mode.
         window.addEventListener("keydown", (event) => tslib_1.__awaiter(this, void 0, void 0, function* () {
             if (event.altKey && event.key === "Enter") {
@@ -489,6 +492,9 @@ class Assets {
                 else if (src === "appinfo.json") {
                     asset = (yield (yield fetch("appinfo.json")).json());
                 }
+                else if (src.endsWith(".dialog.json")) {
+                    asset = (yield (yield fetch("assets/" + src)).json());
+                }
                 else {
                     throw new Error("Unknown asset format: " + src);
                 }
@@ -734,6 +740,16 @@ class Sound {
                 getAudioContext().decodeAudioData(arrayBuffer, buffer => resolve(new Sound(buffer)), error => reject(error));
             });
         });
+    }
+    static shallowClone(sound) {
+        const cloned = Object.create(sound.constructor.prototype);
+        Object.keys(sound).forEach(key => {
+            cloned[key] = sound[key];
+        });
+        return cloned;
+    }
+    shallowClone() {
+        return Sound.shallowClone(this);
     }
     isPlaying() {
         return this.source != null;
@@ -3167,7 +3183,7 @@ const preventDefaultKeyCodes = [
 ];
 const keyToIntentMappings = new Map();
 keyToIntentMappings.set("Space", [ControllerIntent_1.ControllerIntent.PLAYER_JUMP]);
-keyToIntentMappings.set("KeyW", [ControllerIntent_1.ControllerIntent.PLAYER_ENTER_DOOR, ControllerIntent_1.ControllerIntent.MENU_UP]);
+keyToIntentMappings.set("KeyW", [ControllerIntent_1.ControllerIntent.PLAYER_JUMP, ControllerIntent_1.ControllerIntent.MENU_UP]);
 keyToIntentMappings.set("KeyA", [ControllerIntent_1.ControllerIntent.PLAYER_MOVE_LEFT, ControllerIntent_1.ControllerIntent.MENU_LEFT]);
 keyToIntentMappings.set("KeyS", [ControllerIntent_1.ControllerIntent.PLAYER_DROP, ControllerIntent_1.ControllerIntent.MENU_DOWN]);
 keyToIntentMappings.set("KeyD", [ControllerIntent_1.ControllerIntent.PLAYER_MOVE_RIGHT, ControllerIntent_1.ControllerIntent.MENU_RIGHT]);
@@ -4853,6 +4869,22 @@ class SceneNode {
         }
     }
     /**
+     * Get the vertical center position of the scene node.
+     *
+     * @return The vertical center of the scene node.
+     */
+    getCenterY() {
+        if (Direction_1.Direction.isTop(this.anchor)) {
+            return this.position.y + this.size.height / 2;
+        }
+        else if (Direction_1.Direction.isBottom(this.anchor)) {
+            return this.position.y - this.size.height / 2;
+        }
+        else {
+            return this.position.y;
+        }
+    }
+    /**
      * Get the bottom edge of the scene node.
      *
      * @return The bottom edge of the scene node.
@@ -6035,6 +6067,9 @@ class Scenes {
             if (currentScene.outTransition) {
                 currentScene.currentTransition = currentScene.outTransition;
                 outTransitionPromise = currentScene.currentTransition.start("out");
+                if (currentScene.outTransition.isExclusive()) {
+                    yield outTransitionPromise;
+                }
             }
             const currentSceneIndex = this.scenes.length - 1;
             const newScene = this.createScene(newSceneClass);
@@ -6490,6 +6525,70 @@ exports.TiledMapNode = TiledMapNode;
 
 /***/ }),
 
+/***/ "./lib/engine/scene/Transition.js":
+/*!****************************************!*\
+  !*** ./lib/engine/scene/Transition.js ***!
+  \****************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Transition = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const math_1 = __webpack_require__(/*! ../util/math */ "./lib/engine/util/math.js");
+const easings_1 = __webpack_require__(/*! ../util/easings */ "./lib/engine/util/easings.js");
+class Transition {
+    constructor({ duration = 0.5, easing = easings_1.linear, delay = 0, exclusive = false } = {}) {
+        this.type = "out";
+        this.elapsed = 0;
+        this.resolve = null;
+        this.promise = null;
+        this.duration = duration;
+        this.easing = easing;
+        this.delay = delay;
+        this.exclusive = exclusive;
+    }
+    isExclusive() {
+        return this.exclusive;
+    }
+    valueOf() {
+        const value = this.easing(math_1.clamp((Math.max(0, this.elapsed - this.delay)) / this.duration, 0, 1));
+        return this.type === "out" ? value : (1 - value);
+    }
+    update(dt) {
+        if (this.promise != null) {
+            this.elapsed += dt;
+            if (this.elapsed - this.delay >= this.duration) {
+                this.stop();
+            }
+        }
+    }
+    draw(ctx, draw, width, height) { }
+    start(type) {
+        return tslib_1.__awaiter(this, void 0, void 0, function* () {
+            if (this.promise == null) {
+                this.type = type;
+                this.elapsed = 0;
+                this.promise = new Promise(resolve => { this.resolve = resolve; });
+            }
+            return this.promise;
+        });
+    }
+    stop() {
+        if (this.resolve != null) {
+            this.resolve();
+            this.resolve = null;
+            this.promise = null;
+        }
+    }
+}
+exports.Transition = Transition;
+
+
+/***/ }),
+
 /***/ "./lib/engine/scene/animations/Animator.js":
 /*!*************************************************!*\
   !*** ./lib/engine/scene/animations/Animator.js ***!
@@ -6781,6 +6880,9 @@ class ScenePointerDownEvent extends ScenePointerEvent_1.ScenePointerEvent {
         canvas.addEventListener("pointercancel", listener);
         return cleanup;
     }
+    getButton() {
+        return this.event.button;
+    }
 }
 exports.ScenePointerDownEvent = ScenePointerDownEvent;
 
@@ -6808,6 +6910,7 @@ class ScenePointerEvent {
         const scaleY = canvas.height / canvas.offsetHeight;
         const cameraTransformation = scene.camera.getSceneTransformation();
         this.position = new Vector2_1.Vector2(event.offsetX, event.offsetY).scale(scaleX, scaleY).div(cameraTransformation);
+        this.screenPosition = new Vector2_1.Vector2(event.offsetX, event.offsetY).scale(scaleX, scaleY);
     }
     getX() {
         return this.position.x;
@@ -6817,6 +6920,15 @@ class ScenePointerEvent {
     }
     getPosition() {
         return this.position;
+    }
+    getScreenX() {
+        return this.screenPosition.x;
+    }
+    getScreenY() {
+        return this.screenPosition.y;
+    }
+    getScreenPosition() {
+        return this.screenPosition;
     }
 }
 exports.ScenePointerEvent = ScenePointerEvent;
@@ -7726,6 +7838,54 @@ exports.TiledTileset = TiledTileset;
 
 /***/ }),
 
+/***/ "./lib/engine/transitions/FadeToBlackTransition.js":
+/*!*********************************************************!*\
+  !*** ./lib/engine/transitions/FadeToBlackTransition.js ***!
+  \*********************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FadeToBlackTransition = void 0;
+const Transition_1 = __webpack_require__(/*! ../scene/Transition */ "./lib/engine/scene/Transition.js");
+class FadeToBlackTransition extends Transition_1.Transition {
+    draw(ctx, draw) {
+        draw();
+        ctx.globalAlpha = this.valueOf();
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
+}
+exports.FadeToBlackTransition = FadeToBlackTransition;
+
+
+/***/ }),
+
+/***/ "./lib/engine/transitions/FadeTransition.js":
+/*!**************************************************!*\
+  !*** ./lib/engine/transitions/FadeTransition.js ***!
+  \**************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FadeTransition = void 0;
+const Transition_1 = __webpack_require__(/*! ../scene/Transition */ "./lib/engine/scene/Transition.js");
+class FadeTransition extends Transition_1.Transition {
+    draw(ctx, draw) {
+        ctx.globalAlpha = 1 - this.valueOf();
+        draw();
+    }
+}
+exports.FadeTransition = FadeTransition;
+
+
+/***/ }),
+
 /***/ "./lib/engine/util/Signal.js":
 /*!***********************************!*\
   !*** ./lib/engine/util/Signal.js ***!
@@ -8492,6 +8652,94 @@ DoorHandler.theInstance = new DoorHandler();
 
 /***/ }),
 
+/***/ "./lib/main/FxManager.js":
+/*!*******************************!*\
+  !*** ./lib/main/FxManager.js ***!
+  \*******************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FxManager = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Assets_1 = __webpack_require__(/*! ../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const Sound_1 = __webpack_require__(/*! ../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
+const math_1 = __webpack_require__(/*! ../engine/util/math */ "./lib/engine/util/math.js");
+const time_1 = __webpack_require__(/*! ../engine/util/time */ "./lib/engine/util/time.js");
+class FxManager {
+    constructor() {
+        this.sounds = [];
+        this.playScreamInterval = null;
+        this.loaded = false;
+        this.currentSoundToPlay = -1;
+        this.active = false;
+        this.loaded = false;
+        this.loadInterval = +setInterval(this.checkLoaded.bind(this), 200);
+    }
+    checkLoaded() {
+        if (FxManager.scream) {
+            this.loaded = true;
+            this.sounds = [FxManager.scream, FxManager.drip, FxManager.metalDoor, FxManager.womanHeavyBreathing];
+            clearInterval(this.loadInterval);
+            this.loadInterval = 0;
+        }
+    }
+    static getInstance() {
+        return FxManager.theInstance;
+    }
+    playSounds() {
+        this.active = true;
+        if (this.loaded) {
+            this.setupNewTimeout();
+        }
+    }
+    setupNewTimeout() {
+        return tslib_1.__awaiter(this, void 0, void 0, function* () {
+            if (this.active) {
+                const timeToNextScream = math_1.clamp(Math.random() * 20000 + 10000, 15000, 350000);
+                yield time_1.sleep(timeToNextScream);
+                this.currentSoundToPlay = Math.floor(Math.random() * this.sounds.length);
+                this.sounds[this.currentSoundToPlay];
+                this.sounds[this.currentSoundToPlay].setVolume(math_1.clamp(Math.random() + 0.3, 0.3, 1));
+                this.sounds[this.currentSoundToPlay].play();
+                yield this.setupNewTimeout();
+            }
+        });
+    }
+    stop() {
+        this.active = false;
+        if (this.playScreamInterval) {
+            clearInterval(this.playScreamInterval);
+        }
+        if (this.currentSoundToPlay > -1) {
+            this.sounds[this.currentSoundToPlay].stop();
+        }
+    }
+}
+FxManager.theInstance = new FxManager();
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/zombieScream.mp3"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], FxManager, "scream", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/drip.mp3"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], FxManager, "drip", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/metalDoor.mp3"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], FxManager, "metalDoor", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/womanHeavyBreathing.mp3"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], FxManager, "womanHeavyBreathing", void 0);
+exports.FxManager = FxManager;
+
+
+/***/ }),
+
 /***/ "./lib/main/Hyperloop.js":
 /*!*******************************!*\
   !*** ./lib/main/Hyperloop.js ***!
@@ -8504,17 +8752,29 @@ DoorHandler.theInstance = new DoorHandler();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Hyperloop = exports.GameStage = void 0;
 const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Assets_1 = __webpack_require__(/*! ../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const Sound_1 = __webpack_require__(/*! ../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
 const RGBColor_1 = __webpack_require__(/*! ../engine/color/RGBColor */ "./lib/engine/color/RGBColor.js");
 const Game_1 = __webpack_require__(/*! ../engine/Game */ "./lib/engine/Game.js");
+const Vector2_1 = __webpack_require__(/*! ../engine/graphics/Vector2 */ "./lib/engine/graphics/Vector2.js");
+const ControllerIntent_1 = __webpack_require__(/*! ../engine/input/ControllerIntent */ "./lib/engine/input/ControllerIntent.js");
+const env_1 = __webpack_require__(/*! ../engine/util/env */ "./lib/engine/util/env.js");
+const math_1 = __webpack_require__(/*! ../engine/util/math */ "./lib/engine/util/math.js");
 const random_1 = __webpack_require__(/*! ../engine/util/random */ "./lib/engine/util/random.js");
 const Dialog_1 = __webpack_require__(/*! ./Dialog */ "./lib/main/Dialog.js");
+const FxManager_1 = __webpack_require__(/*! ./FxManager */ "./lib/main/FxManager.js");
+const MusicManager_1 = __webpack_require__(/*! ./MusicManager */ "./lib/main/MusicManager.js");
 const CollisionNode_1 = __webpack_require__(/*! ./nodes/CollisionNode */ "./lib/main/nodes/CollisionNode.js");
 const LightNode_1 = __webpack_require__(/*! ./nodes/LightNode */ "./lib/main/nodes/LightNode.js");
 const NpcNode_1 = __webpack_require__(/*! ./nodes/NpcNode */ "./lib/main/nodes/NpcNode.js");
 const PlayerNode_1 = __webpack_require__(/*! ./nodes/PlayerNode */ "./lib/main/nodes/PlayerNode.js");
+const SpawnNode_1 = __webpack_require__(/*! ./nodes/SpawnNode */ "./lib/main/nodes/SpawnNode.js");
+const SwitchNode_1 = __webpack_require__(/*! ./nodes/SwitchNode */ "./lib/main/nodes/SwitchNode.js");
 const TrainNode_1 = __webpack_require__(/*! ./nodes/TrainNode */ "./lib/main/nodes/TrainNode.js");
+const GameOverScene_1 = __webpack_require__(/*! ./scenes/GameOverScene */ "./lib/main/scenes/GameOverScene.js");
 const GameScene_1 = __webpack_require__(/*! ./scenes/GameScene */ "./lib/main/scenes/GameScene.js");
 const LoadingScene_1 = __webpack_require__(/*! ./scenes/LoadingScene */ "./lib/main/scenes/LoadingScene.js");
+const SuccessScene_1 = __webpack_require__(/*! ./scenes/SuccessScene */ "./lib/main/scenes/SuccessScene.js");
 var GameStage;
 (function (GameStage) {
     GameStage[GameStage["NONE"] = 0] = "NONE";
@@ -8523,44 +8783,51 @@ var GameStage;
     GameStage[GameStage["BRAKE"] = 3] = "BRAKE";
     GameStage[GameStage["DIALOG"] = 4] = "DIALOG";
     GameStage[GameStage["STUCK"] = 5] = "STUCK";
+    GameStage[GameStage["RETURN"] = 6] = "RETURN";
+    GameStage[GameStage["PRESPAWN"] = 7] = "PRESPAWN";
 })(GameStage = exports.GameStage || (exports.GameStage = {}));
 class Hyperloop extends Game_1.Game {
     constructor() {
         super();
         this.stageStartTime = 0;
         this.stageTime = 0;
-        this.trainSpeed = 1000; // px per second
+        this.trainSpeed = 400; // px per second
         this.totalBrakeTime = 0; // calculated later; seconds train requires to brake down to standstill
         this.playerTeleportLeft = 1100; // leftest point in tunnel where player is teleported
         this.playerTeleportRight = 2970; // rightest point in tunnel where player is teleported
         this.teleportStep = 108; // distance between two tunnel lights
         this.teleportMyTrainYDistance = 50; // only teleport when player is on roughly same height as train, not in rest of level
+        this.dialogs = [];
         this.npcs = [];
+        this.currentPlayerNpc = 2;
+        this.debug = false;
         // Game progress
-        this.charactersAvailable = 4;
+        this.charactersAvailable = 5;
         this.gameStage = GameStage.NONE;
         this.keyTaken = false; // key taken from corpse
         this.fuseboxOn = false;
+        this.fadeOutInitiated = false;
+        this.trainIsReady = false; // game basically won when this is true
         // Dialog
         this.dialogKeyPressed = false;
         this.currentDialogLine = 0;
         this.currentDialog = null;
-        // TODO get from JSON instead
-        this.dialogs = [
-            new Dialog_1.Dialog(["3 What a nice day!",
-                "1 Oh is it?",
-            ]),
-            new Dialog_1.Dialog([
-                "1 What was that?",
-                "2 Was that a power failure?",
-            ])
-        ];
+        this.conversationEndTime = 0;
     }
     // Called by GameScene
     setupScene() {
-        this.getFader().fadeOut({ duration: 0.001 });
         this.spawnNPCs();
         this.setStage(GameStage.INTRO);
+        // Assets cannot be loaded in constructor because the LoadingScene
+        // is not initialized at constructor time and Assets are loaded in the LoadingScene
+        this.dialogs = [
+            new Dialog_1.Dialog(Hyperloop.trainDialog),
+            new Dialog_1.Dialog(Hyperloop.train2Dialog),
+            new Dialog_1.Dialog(Hyperloop.train3Dialog),
+            new Dialog_1.Dialog(Hyperloop.train4Dialog),
+            new Dialog_1.Dialog(Hyperloop.train5Dialog),
+            new Dialog_1.Dialog(Hyperloop.train6Dialog)
+        ];
     }
     update(dt, time) {
         this.stageTime = time - this.stageStartTime;
@@ -8579,6 +8846,12 @@ class Hyperloop extends Game_1.Game {
                 break;
             case GameStage.STUCK:
                 this.updateStuck();
+                break;
+            case GameStage.RETURN:
+                this.updateReturn(dt);
+                break;
+            case GameStage.PRESPAWN:
+                this.updatePrespawn();
                 break;
         }
         if (this.currentDialog) {
@@ -8605,15 +8878,23 @@ class Hyperloop extends Game_1.Game {
                 case GameStage.STUCK:
                     this.initStuck();
                     break;
+                case GameStage.RETURN:
+                    break;
+                case GameStage.PRESPAWN:
+                    this.initPrespawn();
+                    break;
             }
         }
     }
     spawnNPCs() {
         const train = this.getTrain();
-        const chars = [new NpcNode_1.NpcNode(false), new NpcNode_1.NpcNode(true), new NpcNode_1.NpcNode(true), new NpcNode_1.NpcNode(true), new NpcNode_1.NpcNode(false)];
-        const positions = [-80, -40, 24, 60, 132];
+        const chars = [new NpcNode_1.NpcNode(0), new NpcNode_1.NpcNode(1), new NpcNode_1.NpcNode(2), new NpcNode_1.NpcNode(3), new NpcNode_1.NpcNode(4)];
+        const positions = [-80, -40, 24, 60, 125];
         for (let i = 0; i < chars.length; i++) {
             chars[i].moveTo(positions[i], -20).appendTo(train);
+        }
+        for (let i = 3; i < chars.length; i++) {
+            chars[i].setMirrorX(true);
         }
         this.npcs = chars;
     }
@@ -8627,13 +8908,40 @@ class Hyperloop extends Game_1.Game {
             ambient.setColor(new RGBColor_1.RGBColor(0.01, 0.01, 0.01));
         }
     }
+    turnAllLightsRed() {
+        const lights = this.getAllLights();
+        for (const light of lights) {
+            light.setColor(new RGBColor_1.RGBColor(1, 0.1, 0.08));
+        }
+        const ambients = this.getAmbientLights();
+        for (const ambient of ambients) {
+            ambient.setColor(new RGBColor_1.RGBColor(0.05, 0.03, 0.03));
+        }
+    }
+    turnOnAllLights() {
+        const lights = this.getAllLights();
+        for (const light of lights) {
+            light.setColor(new RGBColor_1.RGBColor(0.8, 0.8, 1));
+        }
+        const ambients = this.getAmbientLights();
+        for (const ambient of ambients) {
+            ambient.setColor(new RGBColor_1.RGBColor(0.3, 0.3, 0.35));
+        }
+    }
     updateDialog() {
         var _a;
         // Any key to proceed with next line
         const pressed = (_a = this.input.currentActiveIntents) !== null && _a !== void 0 ? _a : 0;
+        const moveButtonPressed = (this.input.currentActiveIntents & ControllerIntent_1.ControllerIntent.PLAYER_MOVE_LEFT) > 0
+            || (this.input.currentActiveIntents & ControllerIntent_1.ControllerIntent.PLAYER_MOVE_RIGHT) > 0
+            || (this.input.currentActiveIntents & ControllerIntent_1.ControllerIntent.PLAYER_JUMP) > 0
+            || (this.input.currentActiveIntents & ControllerIntent_1.ControllerIntent.PLAYER_DROP) > 0;
+        if (moveButtonPressed) {
+            return;
+        }
         const prevPressed = this.dialogKeyPressed;
         this.dialogKeyPressed = pressed !== 0;
-        if (pressed && !prevPressed) {
+        if (pressed && !prevPressed || env_1.isDev() && this.debug) {
             this.nextDialogLine();
         }
     }
@@ -8658,17 +8966,17 @@ class Hyperloop extends Game_1.Game {
         this.nextDialogLine();
     }
     updateIntro() {
-        // TODO have proper intro with text and/or sound to explain situation to player
         // Proceed to next stage
-        if (this.stageTime > 1) {
+        if (this.stageTime > 2) {
             // Fade in
-            this.getFader().fadeIn({ duration: 1 });
             this.setStage(GameStage.DRIVE);
             return;
         }
     }
     updateDrive() {
         if (!this.currentDialog) {
+            Hyperloop.droneSound.stop();
+            Hyperloop.brakeSound.play();
             this.setStage(GameStage.BRAKE);
             // Compute total break time so that train ends up in desired position
             const train = this.getTrain();
@@ -8681,7 +8989,7 @@ class Hyperloop extends Game_1.Game {
         const train = this.getTrain();
         const offsetX = this.getTime() * this.trainSpeed;
         train.setX(450 + (offsetX % 324)); // 108px between two tunnel lights
-        this.applyCamShake(1);
+        this.handleCamera(1, this.stageTime / 2);
     }
     updateBrake(dt) {
         const progress = this.stageTime / this.totalBrakeTime;
@@ -8693,19 +9001,36 @@ class Hyperloop extends Game_1.Game {
             const train = this.getTrain();
             train.setX(train.getX() + speed * dt);
             const shakeIntensity = 1 - progress + Math.sin(Math.PI * progress) * 2;
-            this.applyCamShake(shakeIntensity);
+            this.handleCamera(shakeIntensity, 1);
         }
     }
     updateConversation() {
         if (!this.currentDialog) {
-            this.setStage(GameStage.STUCK);
+            if (!this.conversationEndTime) {
+                this.conversationEndTime = this.getTime();
+            }
+            else {
+                const p = (this.getTime() - this.conversationEndTime) / 3;
+                this.handleCamera(0, 1 - p);
+                if (p >= 1.3) {
+                    this.setStage(GameStage.STUCK);
+                }
+            }
         }
-        // TODO braking sequence with extreme cam shake
+        else {
+            this.handleCamera(0, 1);
+        }
     }
     updateStuck() {
+        let player;
+        try {
+            player = this.getPlayer();
+        }
+        catch (e) {
+            return;
+        }
         // This is the main game, with gameplay and stuff
         // Ensure player doesn't reach end of tunnel
-        const player = this.getPlayer();
         const pos = player.getScenePosition();
         if (Math.abs(pos.y - this.getTrain().getScenePosition().y) < this.teleportMyTrainYDistance) {
             let move = 0;
@@ -8720,7 +9045,50 @@ class Hyperloop extends Game_1.Game {
             }
         }
     }
+    updateReturn(dt) {
+        let train;
+        try {
+            train = this.getTrain();
+        }
+        catch (e) {
+            return;
+        }
+        // Drive off
+        if (this.stageTime > 5) {
+            const progress = math_1.clamp((this.stageTime - 5.5) / 10, 0, 1);
+            const speed = this.trainSpeed * progress;
+            train.setX(train.getX() + speed * dt);
+        }
+        this.handleCamera(this.stageTime > 5 ? 1 : 0, this.stageTime / 3);
+        // Driving illusion
+        const pos = train.getScenePosition().x;
+        if (pos > 3100) {
+            train.setX(pos - this.teleportStep * 2);
+        }
+        // Fade out
+        if (this.stageTime > 12 && !this.fadeOutInitiated) {
+            this.fadeOutInitiated = true;
+            this.getFader().fadeOut({ duration: 12 }).then(() => this.scenes.setScene(SuccessScene_1.SuccessScene));
+        }
+    }
+    handleCamera(shakeForce = 0, toCenterForce = 1) {
+        const cam = this.getCamera();
+        // Force towards center
+        toCenterForce = math_1.clamp(toCenterForce, 0, 1);
+        const p = 0.5 - 0.5 * Math.cos(toCenterForce * Math.PI);
+        const trainX = this.getTrain().getScenePosition().x;
+        const playerX = this.getPlayer().getScenePosition().x;
+        const diff = playerX - trainX;
+        // Shake
+        const angle = random_1.rnd(Math.PI * 2);
+        const distance = Math.pow(random_1.rnd(shakeForce), 3);
+        const dx = distance * Math.sin(angle), dy = distance * Math.cos(angle);
+        cam.transform(m => m.setTranslation(diff * p + dx, dy));
+    }
     initIntro() {
+        // Play sound
+        setTimeout(() => Hyperloop.introSound.play(), 1000);
+        MusicManager_1.MusicManager.getInstance().setVolume(0.3);
         // Place player into train initially
         const player = this.getPlayer();
         const train = this.getTrain();
@@ -8728,8 +9096,14 @@ class Hyperloop extends Game_1.Game {
         // Make him stuck
         const col = new CollisionNode_1.CollisionNode({ width: 400, height: 20 });
         col.moveTo(-20, -20).appendTo(train);
+        this.getFader().fadeOut({ duration: 0 });
     }
     initDrive() {
+        this.getFader().fadeIn({ duration: 3 });
+        MusicManager_1.MusicManager.getInstance().setVolume(1);
+        Hyperloop.droneSound.setVolume(0.5);
+        Hyperloop.droneSound.setLoop(true);
+        Hyperloop.droneSound.play();
         this.startDialog(0);
     }
     initConversation() {
@@ -8742,24 +9116,149 @@ class Hyperloop extends Game_1.Game {
         const pos = player.getScenePosition();
         player.remove().moveTo(pos.x, pos.y).appendTo(train.getParent());
         train.hideInner();
+        MusicManager_1.MusicManager.getInstance().loopTrack(1);
+        FxManager_1.FxManager.getInstance().playSounds();
+        // Power switch behavior
+        const powerSwitch = this.getGameScene().getNodeById("PowerSwitch");
+        if (powerSwitch && powerSwitch instanceof SwitchNode_1.SwitchNode) {
+            powerSwitch.setOnlyOnce(true);
+            powerSwitch.setOnUpdate((state) => {
+                player.say("Doesn't appear to do anything... yet", 4, 0.5);
+                return false;
+            });
+        }
+        else {
+            throw new Error("No PowerSwitch found! Game not beatable that way :(");
+        }
+        // Spawn enemies at random subset of spawn points behind "first encounter"
+        SpawnNode_1.SpawnNode.getForTrigger(player, "after", true).forEach(s => {
+            if (random_1.rnd() < 0.6)
+                s.spawnEnemy();
+        });
     }
-    spawnNewPlayer() {
+    updatePrespawn() {
+        if (!this.currentDialog) {
+            if (!this.conversationEndTime) {
+                this.conversationEndTime = this.getTime();
+            }
+            else {
+                const p = (this.getTime() - this.conversationEndTime) / 3;
+                this.handleCamera(0, 1 - p);
+                if (p >= 1.3) {
+                    this.spawnNewPlayer();
+                    this.setStage(GameStage.STUCK);
+                }
+            }
+        }
+        else {
+            this.handleCamera(0, 1);
+        }
+    }
+    initPrespawn() {
+        this.startDialog(6 - this.npcs.length);
+        this.getTrain().showInner();
+    }
+    startRespawnSequence() {
         if (this.charactersAvailable > 0) {
+            // Remove NPC from scene
             this.charactersAvailable--;
-            // TODO get proper spawn position
-            const oldPlayer = this.getPlayer();
-            const spawnPoint = this.getTrain().getScenePosition();
-            const pl = new PlayerNode_1.PlayerNode();
-            pl.moveTo(spawnPoint.x, spawnPoint.y - 10);
-            this.getCamera().setFollow(pl);
-            const root = this.getGameScene().rootNode;
-            root.appendChild(pl);
-            oldPlayer.remove();
-            // TODO leave remains of old player
+            const deadNpc = this.npcs.splice(this.currentPlayerNpc, 1)[0];
+            if (deadNpc) {
+                deadNpc.remove();
+                this.currentPlayerNpc = Math.floor(Math.random() * this.npcs.length);
+            }
+            if (this.trainIsReady) {
+                this.spawnNewPlayer();
+                return;
+            }
+            // Show debate sequence
+            this.setStage(GameStage.PRESPAWN);
         }
         else {
             // Game Over or sequence of new train replacing old one
+            this.scenes.setScene(GameOverScene_1.GameOverScene);
         }
+    }
+    spawnNewPlayer() {
+        if (this.charactersAvailable > 0) {
+            // If everything has been done, then player died but still won
+            const player = this.getPlayer();
+            const spawnPoint = this.getTrainDoorCoordinate();
+            player.moveTo(spawnPoint.x, spawnPoint.y);
+            player.setHitpoints(100);
+            player.setAmmoToFull();
+            player.reset();
+            this.getCamera().setFollow(player);
+            if (this.trainIsReady) {
+                this.winGame();
+            }
+            else {
+                // Spawn enemies at random subset of spawn points behind "first encounter"
+                SpawnNode_1.SpawnNode.getForTrigger(player, "after", true).forEach(s => {
+                    if (random_1.rnd() < 0.25)
+                        s.spawnEnemy();
+                });
+                SpawnNode_1.SpawnNode.getForTrigger(player, "before", true).forEach(s => {
+                    if (random_1.rnd() < 0.25)
+                        s.spawnEnemy();
+                });
+            }
+        }
+    }
+    getTrainDoorCoordinate() {
+        const coord = this.getTrain().getScenePosition();
+        return new Vector2_1.Vector2(coord.x - 170, coord.y - 2);
+    }
+    turnOnFuseBox() {
+        this.fuseboxOn = true;
+        this.turnAllLightsRed();
+        this.getCamera().setZoom(1);
+        // Enable power switch
+        const powerSwitch = this.getGameScene().getNodeById("PowerSwitch");
+        if (powerSwitch && powerSwitch instanceof SwitchNode_1.SwitchNode) {
+            powerSwitch.setOnUpdate((state) => {
+                var _a;
+                this.turnOnAllLights();
+                const player = this.getPlayer();
+                player.say("Great. Time to go home.", 4, 1);
+                // Activate game end zone
+                const doorPos = this.getTrainDoorCoordinate();
+                const endSwitch = new SwitchNode_1.SwitchNode({
+                    x: doorPos.x,
+                    y: doorPos.y,
+                    onlyOnce: true,
+                    onUpdate: () => {
+                        this.winGame();
+                        return true;
+                    },
+                    spriteHidden: true
+                });
+                endSwitch.setCaption("PRESS E TO ENTER");
+                (_a = player.getParent()) === null || _a === void 0 ? void 0 : _a.appendChild(endSwitch);
+                this.trainIsReady = true;
+                // Spawn the enemies
+                SpawnNode_1.SpawnNode.getForTrigger(player, "afterSwitch", true).forEach(s => s.spawnEnemy());
+                return true;
+            });
+        }
+        else {
+            throw new Error("No PowerSwitch found! Game not beatable that way :(");
+        }
+    }
+    winGame() {
+        // Kill all enemies
+        this.getPlayer().getPersonalEnemies().forEach(e => e.die());
+        this.setStage(GameStage.RETURN);
+        // Move player into train
+        const player = this.getPlayer();
+        const train = this.getTrain();
+        const pos = player.getScenePosition();
+        const trainPos = train.getScenePosition();
+        player.moveTo(pos.x - trainPos.x, pos.y - trainPos.y);
+        player.remove().appendTo(train);
+        train.showInner();
+        FxManager_1.FxManager.getInstance().stop();
+        MusicManager_1.MusicManager.getInstance().loopTrack(3);
     }
     getPlayer() {
         return this.getGameScene().rootNode.getDescendantsByType(PlayerNode_1.PlayerNode)[0];
@@ -8780,12 +9279,6 @@ class Hyperloop extends Game_1.Game {
     getCamera() {
         return this.getGameScene().camera;
     }
-    applyCamShake(force = 1) {
-        const angle = random_1.rnd(Math.PI * 2);
-        const distance = Math.pow(random_1.rnd(force), 3);
-        const dx = distance * Math.sin(angle), dy = distance * Math.cos(angle);
-        this.getCamera().transform(m => m.setTranslation(dx, dy));
-    }
     getAmbientLights(lights = this.getAllLights()) {
         return lights.filter(light => { var _a; return (_a = light.getId()) === null || _a === void 0 ? void 0 : _a.includes("ambient"); });
     }
@@ -8793,6 +9286,42 @@ class Hyperloop extends Game_1.Game {
         return this.getGameScene().rootNode.getDescendantsByType(LightNode_1.LightNode);
     }
 }
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/hyperloopBrakes.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], Hyperloop, "brakeSound", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/loops/hyperloopDrone.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], Hyperloop, "droneSound", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/voice/trainAnnouncement.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], Hyperloop, "introSound", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("dialog/train.dialog.json"),
+    tslib_1.__metadata("design:type", Array)
+], Hyperloop, "trainDialog", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("dialog/train2.dialog.json"),
+    tslib_1.__metadata("design:type", Array)
+], Hyperloop, "train2Dialog", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("dialog/train3.dialog.json"),
+    tslib_1.__metadata("design:type", Array)
+], Hyperloop, "train3Dialog", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("dialog/train4.dialog.json"),
+    tslib_1.__metadata("design:type", Array)
+], Hyperloop, "train4Dialog", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("dialog/train5.dialog.json"),
+    tslib_1.__metadata("design:type", Array)
+], Hyperloop, "train5Dialog", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("dialog/train6.dialog.json"),
+    tslib_1.__metadata("design:type", Array)
+], Hyperloop, "train6Dialog", void 0);
 exports.Hyperloop = Hyperloop;
 (() => tslib_1.__awaiter(void 0, void 0, void 0, function* () {
     const game = new Hyperloop();
@@ -8800,6 +9329,97 @@ exports.Hyperloop = Hyperloop;
     window.game = game;
     game.start();
 }))();
+
+
+/***/ }),
+
+/***/ "./lib/main/MusicManager.js":
+/*!**********************************!*\
+  !*** ./lib/main/MusicManager.js ***!
+  \**********************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MusicManager = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Assets_1 = __webpack_require__(/*! ../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const Sound_1 = __webpack_require__(/*! ../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
+class MusicManager {
+    constructor() {
+        this.tracks = [];
+        this.volumes = [];
+        this.currentMusic = -1;
+        this.loaded = false;
+        this.currentMusic = -1;
+        this.loaded = false;
+        this.loadInterval = +setInterval(this.checkLoaded.bind(this), 200);
+    }
+    static getInstance() {
+        return MusicManager.theInstance;
+    }
+    checkLoaded() {
+        if (MusicManager.music0) {
+            this.loaded = true;
+            this.tracks = [MusicManager.music0, MusicManager.music1, MusicManager.music2, MusicManager.music3];
+            this.volumes = [1, 0.5, 1, 1];
+            clearInterval(this.loadInterval);
+            this.loadInterval = 0;
+            if (this.currentMusic >= 0) {
+                const id = this.currentMusic;
+                this.currentMusic = -1;
+                this.loopTrack(id);
+            }
+        }
+    }
+    loopTrack(id) {
+        if (!this.loaded) {
+            this.currentMusic = id;
+            return;
+        }
+        if (id !== this.currentMusic) {
+            if (this.currentMusic >= 0) {
+                this.tracks[this.currentMusic].stop();
+            }
+            if (this.tracks[id] == null) {
+                console.error("Couldn't load music track");
+                return;
+            }
+            this.currentMusic = id;
+            if (this.currentMusic >= 0) {
+                this.tracks[this.currentMusic].setLoop(true);
+                this.tracks[this.currentMusic].setVolume(this.volumes[this.currentMusic]);
+                this.tracks[this.currentMusic].play();
+            }
+        }
+    }
+    setVolume(factor = 1) {
+        this.tracks[this.currentMusic].setVolume(this.volumes[this.currentMusic] * factor);
+    }
+    stop() {
+        this.loopTrack(-1);
+    }
+}
+MusicManager.theInstance = new MusicManager();
+tslib_1.__decorate([
+    Assets_1.asset("music/01-riding-the-hyperloop.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], MusicManager, "music0", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("music/02-down-in-the-tunnel.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], MusicManager, "music1", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("music/03-uncertainty-ahead.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], MusicManager, "music2", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("music/04-down-in-the-tunnel-with-lyrics.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], MusicManager, "music3", void 0);
+exports.MusicManager = MusicManager;
 
 
 /***/ }),
@@ -8882,14 +9502,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CharacterNode = void 0;
 const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
 const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const BitmapFont_1 = __webpack_require__(/*! ../../engine/assets/BitmapFont */ "./lib/engine/assets/BitmapFont.js");
 const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
-const Line2_1 = __webpack_require__(/*! ../../engine/graphics/Line2 */ "./lib/engine/graphics/Line2.js");
 const Vector2_1 = __webpack_require__(/*! ../../engine/graphics/Vector2 */ "./lib/engine/graphics/Vector2.js");
 const AsepriteNode_1 = __webpack_require__(/*! ../../engine/scene/AsepriteNode */ "./lib/engine/scene/AsepriteNode.js");
 const cache_1 = __webpack_require__(/*! ../../engine/util/cache */ "./lib/engine/util/cache.js");
 const math_1 = __webpack_require__(/*! ../../engine/util/math */ "./lib/engine/util/math.js");
 const random_1 = __webpack_require__(/*! ../../engine/util/random */ "./lib/engine/util/random.js");
+const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
 const CollisionNode_1 = __webpack_require__(/*! ./CollisionNode */ "./lib/main/nodes/CollisionNode.js");
+const DialogNode_1 = __webpack_require__(/*! ./DialogNode */ "./lib/main/nodes/DialogNode.js");
+const MarkLineNode_1 = __webpack_require__(/*! ./MarkLineNode */ "./lib/main/nodes/MarkLineNode.js");
 const MarkNode_1 = __webpack_require__(/*! ./MarkNode */ "./lib/main/nodes/MarkNode.js");
 const ParticleNode_1 = __webpack_require__(/*! ./ParticleNode */ "./lib/main/nodes/ParticleNode.js");
 // TODO define in some constants file
@@ -8913,9 +9536,8 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
         this.battlemode = false;
         this.battlemodeTimeout = 2000;
         this.battlemodeTimeoutTimerId = null;
-        this.bulletStartPoint = null;
-        this.bulletEndPoint = null;
         this.storedCollisionCoordinate = new Vector2_1.Vector2(0, 0);
+        this.consecutiveXCollisions = 0;
         // Talking/Thinking
         this.speakSince = 0;
         this.speakUntil = 0;
@@ -8959,6 +9581,13 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
             lifetime: () => random_1.rnd(0.5, 0.9),
             alphaCurve: ParticleNode_1.valueCurves.trapeze(0.05, 0.2)
         }).appendTo(this);
+        this.dialogNode = new DialogNode_1.DialogNode({
+            font: CharacterNode.dialogFont,
+            color: "white",
+            outlineColor: "black",
+            y: -30,
+            layer: constants_1.Layer.OVERLAY
+        }).appendTo(this);
     }
     update(dt, time) {
         super.update(dt, time);
@@ -8969,9 +9598,14 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
             || this.getTag() === "attack" && this.getTimesPlayed("attack") === 0;
         // Death animation
         if (!this.isAlive()) {
-            this.setTag("die");
             if (this.getTimesPlayed("die") > 0 && this.removeOnDie) {
                 this.remove();
+            }
+            else if (this.getTimesPlayed("die") === 1 || this.getTag() === "dead") {
+                this.setTag("dead");
+            }
+            else {
+                this.setTag("die");
             }
             return;
         }
@@ -9005,6 +9639,10 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
             if (this.getPlayerCollisionAt(newX, y)) {
                 newX = x;
                 this.velocity = new Vector2_1.Vector2(0, this.velocity.y);
+                this.consecutiveXCollisions += dt;
+            }
+            else {
+                this.consecutiveXCollisions = 0;
             }
             // Y collision
             if (this.getPlayerCollisionAt(newX, newY)) {
@@ -9037,6 +9675,34 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
             this.speakUntil = 0;
             this.speakSince = 0;
         }
+        if (this.speakLine && this.gameTime > this.speakSince && this.gameTime < this.speakUntil) {
+            const progress = (this.gameTime - this.speakSince);
+            const line = this.speakLine.substr(0, Math.ceil(28 * progress));
+            this.dialogNode.setText(line);
+        }
+        else {
+            this.dialogNode.setText("");
+        }
+        if (this.getPlayerCollisionAt(this.x, this.y)) {
+            this.unstuck();
+        }
+    }
+    unstuck() {
+        for (let i = 1; i < 100; i++) {
+            if (!this.getPlayerCollisionAt(this.x, this.y - i)) {
+                return this.moveTo(this.x, this.y - i);
+            }
+            else if (!this.getPlayerCollisionAt(this.x, this.y + i)) {
+                return this.moveTo(this.x, this.y + i);
+            }
+            else if (!this.getPlayerCollisionAt(this.x - i, this.y)) {
+                return this.moveTo(this.x - i, this.y);
+            }
+            else if (!this.getPlayerCollisionAt(this.x + i, this.y)) {
+                return this.moveTo(this.x + i, this.y);
+            }
+        }
+        return this;
     }
     setDirection(direction = 0) {
         this.direction = direction;
@@ -9051,7 +9717,7 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
         }
     }
     shoot(angle, power, origin = new Vector2_1.Vector2(this.getScenePosition().x, this.getScenePosition().y - this.getHeight() * .5)) {
-        var _a;
+        var _a, _b;
         this.startBattlemode();
         CharacterNode.shootSound.stop();
         CharacterNode.shootSound.play();
@@ -9060,8 +9726,12 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
         const isColliding = this.getLineCollision(origin.x, origin.y, diffX, diffY, PROJECTILE_STEP_SIZE);
         if (isColliding) {
             const coord = this.storedCollisionCoordinate;
-            const markNode = new MarkNode_1.MarkNode({ x: coord.x, y: coord.y });
-            (_a = this.getParent()) === null || _a === void 0 ? void 0 : _a.appendChild(markNode);
+            if (this.debug) {
+                const markNode = new MarkNode_1.MarkNode({ x: coord.x, y: coord.y });
+                const markLineNode = new MarkLineNode_1.MarkLineNode(new Vector2_1.Vector2(origin.x, origin.y), coord);
+                (_a = this.getParent()) === null || _a === void 0 ? void 0 : _a.appendChild(markNode);
+                (_b = this.getParent()) === null || _b === void 0 ? void 0 : _b.appendChild(markLineNode);
+            }
             if (isColliding instanceof CharacterNode) {
                 const bounds = isColliding.getSceneBounds();
                 const headshot = (coord.y < bounds.minY + 0.25 * (bounds.height));
@@ -9098,47 +9768,12 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
         for (let i = 0; i <= steps; i++) {
             isColliding = this.getPointCollision(nextCheckPoint.x, nextCheckPoint.y, enemies, colliders);
             nextCheckPoint.add({ x: stepX, y: stepY });
-            if (this.debug) {
-                this.bulletStartPoint = this.bulletStartPoint.add({ x: stepX, y: stepY });
-                this.bulletEndPoint = this.bulletEndPoint.add({ x: stepX, y: stepY });
-            }
             if (isColliding) {
                 this.storedCollisionCoordinate = nextCheckPoint;
                 return isColliding;
             }
         }
         return null;
-    }
-    draw(context) {
-        super.draw(context);
-        if (this.debug) {
-            this.drawShootingLine(context);
-        }
-        // TODO put this into proper text node
-        if (this.speakLine) {
-            const progress = (this.gameTime - this.speakSince);
-            const line = this.speakLine.substr(0, Math.ceil(28 * progress));
-            context.save();
-            context.fillStyle = "white";
-            context.textAlign = "center";
-            context.fillText(line, 0, -15);
-            context.restore();
-        }
-    }
-    drawShootingLine(context) {
-        // Draw shot line
-        if (this.bulletStartPoint && this.bulletEndPoint) {
-            context.save();
-            const line = new Line2_1.Line2(this.bulletStartPoint, this.bulletEndPoint);
-            context.save();
-            context.beginPath();
-            line.draw(context);
-            context.strokeStyle = "#ffffff";
-            context.stroke();
-            context.closePath();
-            context.restore();
-            context.restore();
-        }
     }
     /**
      * Deal damage to the character.
@@ -9167,9 +9802,16 @@ class CharacterNode extends AsepriteNode_1.AsepriteNode {
         }
         return false;
     }
-    say(line = "", duration = 0) {
-        this.speakSince = this.gameTime;
-        this.speakUntil = this.gameTime + duration;
+    setHitpoints(hp) {
+        this.hitpoints = hp;
+    }
+    reset() {
+        this.velocity = new Vector2_1.Vector2(0, 0);
+        this.setTag("idle");
+    }
+    say(line = "", duration = 0, delay = 0) {
+        this.speakSince = this.gameTime + delay;
+        this.speakUntil = this.speakSince + duration;
         this.speakLine = line;
     }
     setTag(tag) {
@@ -9285,6 +9927,10 @@ tslib_1.__decorate([
     Assets_1.asset("sounds/fx/gunshot.ogg"),
     tslib_1.__metadata("design:type", Sound_1.Sound)
 ], CharacterNode, "shootSound", void 0);
+tslib_1.__decorate([
+    Assets_1.asset(constants_1.STANDARD_FONT),
+    tslib_1.__metadata("design:type", BitmapFont_1.BitmapFont)
+], CharacterNode, "dialogFont", void 0);
 exports.CharacterNode = CharacterNode;
 
 
@@ -9348,6 +9994,8 @@ const Aseprite_1 = __webpack_require__(/*! ../../engine/assets/Aseprite */ "./li
 const Direction_1 = __webpack_require__(/*! ../../engine/geom/Direction */ "./lib/engine/geom/Direction.js");
 const InteractiveNode_1 = __webpack_require__(/*! ./InteractiveNode */ "./lib/main/nodes/InteractiveNode.js");
 const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
+const MusicManager_1 = __webpack_require__(/*! ../MusicManager */ "./lib/main/MusicManager.js");
 class CorpseNode extends InteractiveNode_1.InteractiveNode {
     constructor(args) {
         super(Object.assign({ aseprite: CorpseNode.sprite, anchor: Direction_1.Direction.BOTTOM, tag: "off" }, args), "PRESS E TO SEARCH CORPSE");
@@ -9358,10 +10006,22 @@ class CorpseNode extends InteractiveNode_1.InteractiveNode {
             // TODO play some neat key take sound
             this.keyTaken = true;
             this.getGame().keyTaken = true;
-            console.log("Key taken");
+            CorpseNode.pickupSound.play();
+            const player = this.getTarget();
+            player === null || player === void 0 ? void 0 : player.say("This key will surely be useful", 3, 0.5);
             setTimeout(() => {
+                CorpseNode.lightSound.play();
                 this.getGame().turnOffAllLights();
-            }, 2000);
+                MusicManager_1.MusicManager.getInstance().loopTrack(2);
+                const game = this.getGame();
+                const fader = game.getFader();
+                fader.fadeOut({ duration: 0.1 }).then(() => {
+                    fader.fadeIn({ duration: 2 });
+                });
+                // Deactivated until better solution? 1.5 looks really shitty
+                // game.getCamera().setZoom(1.5);
+                player === null || player === void 0 ? void 0 : player.say("Uh oh...", 3, 1.5);
+            }, 5000);
         }
     }
     canInteract() {
@@ -9372,7 +10032,111 @@ tslib_1.__decorate([
     Assets_1.asset("sprites/corpse.aseprite.json"),
     tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
 ], CorpseNode, "sprite", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/breakerSwitch.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], CorpseNode, "lightSound", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/pickupKey.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], CorpseNode, "pickupSound", void 0);
 exports.CorpseNode = CorpseNode;
+
+
+/***/ }),
+
+/***/ "./lib/main/nodes/DeadSpaceSuiteNode.js":
+/*!**********************************************!*\
+  !*** ./lib/main/nodes/DeadSpaceSuiteNode.js ***!
+  \**********************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DeadSpaceSuitNode = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Aseprite_1 = __webpack_require__(/*! ../../engine/assets/Aseprite */ "./lib/engine/assets/Aseprite.js");
+const Direction_1 = __webpack_require__(/*! ../../engine/geom/Direction */ "./lib/engine/geom/Direction.js");
+const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const AsepriteNode_1 = __webpack_require__(/*! ../../engine/scene/AsepriteNode */ "./lib/engine/scene/AsepriteNode.js");
+class DeadSpaceSuitNode extends AsepriteNode_1.AsepriteNode {
+    constructor(args) {
+        super(Object.assign({ aseprite: DeadSpaceSuitNode.sprite, anchor: Direction_1.Direction.BOTTOM, tag: "idle" }, args));
+    }
+}
+tslib_1.__decorate([
+    Assets_1.asset("sprites/deadspacesuit.aseprite.json"),
+    tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
+], DeadSpaceSuitNode, "sprite", void 0);
+exports.DeadSpaceSuitNode = DeadSpaceSuitNode;
+
+
+/***/ }),
+
+/***/ "./lib/main/nodes/DialogNode.js":
+/*!**************************************!*\
+  !*** ./lib/main/nodes/DialogNode.js ***!
+  \**************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DialogNode = void 0;
+const TextNode_1 = __webpack_require__(/*! ../../engine/scene/TextNode */ "./lib/engine/scene/TextNode.js");
+class DialogNode extends TextNode_1.TextNode {
+    /** @inheritDoc */
+    draw(ctx) {
+        ctx.save();
+        super.draw(ctx);
+        ctx.restore();
+        ctx.save();
+        /*
+        if (this.outlineColor != null) {
+            this.font.drawTextWithOutline(ctx, this.text, 0, 0, this.color, this.outlineColor);
+        } else {
+            this.font.drawText(ctx, this.text, 0, 0, this.color);
+        }
+        */
+        if (this.getText() !== "") {
+            ctx.beginPath();
+            // Hack to get pixel boundaries correct
+            const transform = ctx.getTransform();
+            ctx.translate(Math.round(transform.e) - transform.e, Math.round(transform.f) - transform.f);
+            const scale = this.getSceneTransformation().getScaleX();
+            ctx.translate(0.5 * scale, 0.5 * scale);
+            const w = this.getWidth();
+            const h = this.getHeight();
+            const w2 = w >> 1;
+            const h2 = h >> 1;
+            ctx.beginPath();
+            ctx.moveTo(-5, h2 - 1);
+            ctx.lineTo(-5, h + 2);
+            ctx.lineTo(w2 - 3, h + 2);
+            ctx.lineTo(w2, h + 6);
+            ctx.lineTo(w2 + 3, h + 2);
+            ctx.lineTo(w + 4, h + 2);
+            ctx.lineTo(w + 4, h2 - 1);
+            ctx.strokeStyle = "white";
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(-6, h2);
+            ctx.lineTo(-6, h + 3);
+            ctx.lineTo(w2 - 5, h + 3);
+            ctx.lineTo(w2, h + 8);
+            ctx.lineTo(w2 + 5, h + 3);
+            ctx.lineTo(w + 5, h + 3);
+            ctx.lineTo(w + 5, h2);
+            ctx.strokeStyle = "black";
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+}
+exports.DialogNode = DialogNode;
 
 
 /***/ }),
@@ -9464,6 +10228,7 @@ exports.DoorNode = DoorNode;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EnemyNode = exports.AiState = void 0;
 const Vector2_1 = __webpack_require__(/*! ../../engine/graphics/Vector2 */ "./lib/engine/graphics/Vector2.js");
+const math_1 = __webpack_require__(/*! ../../engine/util/math */ "./lib/engine/util/math.js");
 const random_1 = __webpack_require__(/*! ../../engine/util/random */ "./lib/engine/util/random.js");
 const time_1 = __webpack_require__(/*! ../../engine/util/time */ "./lib/engine/util/time.js");
 const CharacterNode_1 = __webpack_require__(/*! ./CharacterNode */ "./lib/main/nodes/CharacterNode.js");
@@ -9615,6 +10380,7 @@ class EnemyNode extends CharacterNode_1.CharacterNode {
     }
     updateFollow(time) {
         const player = this.getPlayer();
+        this.autoJump();
         // Update target position if seeing player
         if (player) {
             // Update target if in sight
@@ -9646,10 +10412,11 @@ class EnemyNode extends CharacterNode_1.CharacterNode {
         }
     }
     updateAttack(time) {
+        this.autoJump();
         if (time > this.lastStateChange + this.attackDelay) {
             // Hurt player
             const player = this.getPlayer();
-            const playerDied = player === null || player === void 0 ? void 0 : player.hurt(0, this.getScenePosition());
+            const playerDied = player === null || player === void 0 ? void 0 : player.hurt(math_1.clamp(Math.floor(Math.random() * 30), 5, 30), this.getScenePosition());
             this.scream();
             if (playerDied) {
                 this.setState(AiState.BORED);
@@ -9658,6 +10425,11 @@ class EnemyNode extends CharacterNode_1.CharacterNode {
             }
             // Return to follow state
             this.setState(AiState.FOLLOW);
+        }
+    }
+    autoJump(threshold = 0.7) {
+        if (this.consecutiveXCollisions > threshold) {
+            this.jump();
         }
     }
     setState(state, time = this.updateTime) {
@@ -9741,7 +10513,7 @@ class EnemyNode extends CharacterNode_1.CharacterNode {
             this.alertedBy = couldHearPlayer ? "SOUND" : "VIEW";
             this.timeOfAlert = time_1.now();
         }
-        return (couldViewPlayer || couldHearPlayer) && isColliding;
+        return couldHearPlayer || (couldViewPlayer && isColliding);
     }
 }
 exports.EnemyNode = EnemyNode;
@@ -9766,6 +10538,7 @@ const Direction_1 = __webpack_require__(/*! ../../engine/geom/Direction */ "./li
 const InteractiveNode_1 = __webpack_require__(/*! ./InteractiveNode */ "./lib/main/nodes/InteractiveNode.js");
 const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
 const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const SpawnNode_1 = __webpack_require__(/*! ./SpawnNode */ "./lib/main/nodes/SpawnNode.js");
 class FuseboxNode extends InteractiveNode_1.InteractiveNode {
     constructor(args) {
         super(Object.assign({ aseprite: FuseboxNode.sprite, anchor: Direction_1.Direction.BOTTOM, tag: "closed" }, args), "PRESS E TO USE KEY");
@@ -9773,17 +10546,23 @@ class FuseboxNode extends InteractiveNode_1.InteractiveNode {
         this.isOn = false;
     }
     interact() {
+        var _a, _b;
         if (this.canInteract()) {
             if (!this.isOpen) {
                 this.isOpen = true;
                 this.setTag("open-off");
                 this.caption = "PRESS E TO TURN ON";
                 FuseboxNode.doorSound.play();
+                (_a = this.getTarget()) === null || _a === void 0 ? void 0 : _a.say("Let's turn it on", 2);
+                // Spawn enemy in back
+                SpawnNode_1.SpawnNode.getForTrigger(this, "fusebox").forEach(spawn => spawn.spawnEnemy());
             }
             else {
                 this.isOn = true;
                 this.setTag("open-on");
-                this.getGame().fuseboxOn = true;
+                const game = this.getGame();
+                game.turnOnFuseBox();
+                (_b = this.getTarget()) === null || _b === void 0 ? void 0 : _b.say("Time to find that switch", 5, 8);
                 FuseboxNode.doorSound.stop();
                 FuseboxNode.leverSound.play();
             }
@@ -9821,15 +10600,31 @@ exports.FuseboxNode = FuseboxNode;
 
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InteractiveNode = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const BitmapFont_1 = __webpack_require__(/*! ../../engine/assets/BitmapFont */ "./lib/engine/assets/BitmapFont.js");
 const AsepriteNode_1 = __webpack_require__(/*! ../../engine/scene/AsepriteNode */ "./lib/engine/scene/AsepriteNode.js");
+const TextNode_1 = __webpack_require__(/*! ../../engine/scene/TextNode */ "./lib/engine/scene/TextNode.js");
 const math_1 = __webpack_require__(/*! ../../engine/util/math */ "./lib/engine/util/math.js");
+const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
 const PlayerNode_1 = __webpack_require__(/*! ./PlayerNode */ "./lib/main/nodes/PlayerNode.js");
+const TrainNode_1 = __webpack_require__(/*! ./TrainNode */ "./lib/main/nodes/TrainNode.js");
 class InteractiveNode extends AsepriteNode_1.AsepriteNode {
     constructor(args, caption = "") {
         super(args);
         this.target = null;
         this.captionOpacity = 0;
         this.hideSprite = false;
+        this.caption = caption;
+        this.textNode = new TextNode_1.TextNode({
+            font: InteractiveNode.font,
+            color: "white",
+            outlineColor: "black",
+            y: 20,
+            layer: constants_1.Layer.OVERLAY
+        }).appendTo(this);
+    }
+    setCaption(caption) {
         this.caption = caption;
     }
     getRange() {
@@ -9853,6 +10648,8 @@ class InteractiveNode extends AsepriteNode_1.AsepriteNode {
         else {
             this.captionOpacity = math_1.clamp(this.captionOpacity - dt * 2, 0, 1);
         }
+        this.textNode.setOpacity(this.captionOpacity);
+        this.textNode.setText(this.caption);
     }
     canInteract() {
         return true;
@@ -9873,27 +10670,18 @@ class InteractiveNode extends AsepriteNode_1.AsepriteNode {
     }
     getPlayer() {
         var _a;
-        return (_a = this.getScene()) === null || _a === void 0 ? void 0 : _a.rootNode.getDescendantsByType(PlayerNode_1.PlayerNode)[0];
+        return (_a = this.getScene()) === null || _a === void 0 ? void 0 : _a.rootNode.getDescendantsByType(PlayerNode_1.PlayerNode).filter(p => p.isAlive() && !(p.getParent() instanceof TrainNode_1.TrainNode))[0];
     }
     draw(context) {
         if (!this.hideSprite) {
             super.draw(context);
         }
-        // Draw Caption
-        if (this.caption !== "" && this.captionOpacity > 0) {
-            context.save();
-            context.font = "8px Arial";
-            context.textAlign = "center";
-            context.fillStyle = "black";
-            context.strokeStyle = "white";
-            context.globalAlpha *= this.captionOpacity;
-            const offY = -12;
-            context.strokeText(this.caption, 0, offY);
-            context.fillText(this.caption, 0, offY);
-            context.restore();
-        }
     }
 }
+tslib_1.__decorate([
+    Assets_1.asset(constants_1.STANDARD_FONT),
+    tslib_1.__metadata("design:type", BitmapFont_1.BitmapFont)
+], InteractiveNode, "font", void 0);
 exports.InteractiveNode = InteractiveNode;
 
 
@@ -10033,6 +10821,55 @@ exports.LightNode = LightNode;
 
 /***/ }),
 
+/***/ "./lib/main/nodes/MarkLineNode.js":
+/*!****************************************!*\
+  !*** ./lib/main/nodes/MarkLineNode.js ***!
+  \****************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MarkLineNode = void 0;
+const Line2_1 = __webpack_require__(/*! ../../engine/graphics/Line2 */ "./lib/engine/graphics/Line2.js");
+const SceneNode_1 = __webpack_require__(/*! ../../engine/scene/SceneNode */ "./lib/engine/scene/SceneNode.js");
+const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
+class MarkLineNode extends SceneNode_1.SceneNode {
+    constructor(start, end) {
+        super({
+            width: 1,
+            height: 1,
+            layer: constants_1.Layer.OVERLAY
+        });
+        this.start = start;
+        this.end = end;
+        this.startTime = 0;
+        this.killTime = 0;
+    }
+    update(dt, time) {
+        if (this.startTime === 0) {
+            this.startTime = time;
+            this.killTime = this.startTime + 5;
+        }
+        else if (time > this.killTime) {
+            super.remove();
+        }
+    }
+    draw(context) {
+        context.strokeStyle = "green";
+        const line = new Line2_1.Line2(this.start, this.end);
+        context.beginPath();
+        line.draw(context);
+        context.closePath();
+        context.stroke();
+    }
+}
+exports.MarkLineNode = MarkLineNode;
+
+
+/***/ }),
+
 /***/ "./lib/main/nodes/MarkNode.js":
 /*!************************************!*\
   !*** ./lib/main/nodes/MarkNode.js ***!
@@ -10094,29 +10931,33 @@ const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engi
 const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
 const random_1 = __webpack_require__(/*! ../../engine/util/random */ "./lib/engine/util/random.js");
 const Rect_1 = __webpack_require__(/*! ../../engine/geom/Rect */ "./lib/engine/geom/Rect.js");
+const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
 class MonsterNode extends EnemyNode_1.EnemyNode {
     constructor(args) {
-        super(Object.assign({ aseprite: MonsterNode.sprite, anchor: Direction_1.Direction.BOTTOM, tag: "idle", sourceBounds: new Rect_1.Rect(8, 6, 16, 34) }, args));
+        super(Object.assign({ aseprite: MonsterNode.sprite, anchor: Direction_1.Direction.BOTTOM, tag: "idle", sourceBounds: new Rect_1.Rect(8, 6, 16, 34), layer: constants_1.Layer.FOREGROUND }, args));
+        this.attackSound = MonsterNode.monsterSoundAttack.shallowClone();
+        this.damageSound = MonsterNode.monsterSoundDamage.shallowClone();
         this.targetPosition = this.getPosition();
         this.moveAroundAfterChase = true;
         this.hitpoints = random_1.rnd(65, 120) + random_1.rnd(random_1.rnd(100));
     }
     hurt(damage, origin) {
-        MonsterNode.monsterSoundDamage.play();
+        this.damageSound.stop();
+        this.damageSound.play();
         return super.hurt(damage, origin);
     }
     staySilent() {
         if (this.isScreaming()) {
-            MonsterNode.monsterSoundAttack.stop();
+            this.attackSound.stop();
         }
     }
     isScreaming() {
-        return MonsterNode.monsterSoundAttack.isPlaying();
+        return this.attackSound.isPlaying();
     }
     scream() {
         if (!this.isScreaming()) {
             this.staySilent();
-            MonsterNode.monsterSoundAttack.play();
+            this.attackSound.play();
         }
     }
 }
@@ -10129,7 +10970,7 @@ tslib_1.__decorate([
     tslib_1.__metadata("design:type", Sound_1.Sound)
 ], MonsterNode, "monsterSoundAttack", void 0);
 tslib_1.__decorate([
-    Assets_1.asset("sounds/fx/drip.mp3"),
+    Assets_1.asset("sounds/fx/monsterHit.ogg"),
     tslib_1.__metadata("design:type", Sound_1.Sound)
 ], MonsterNode, "monsterSoundDamage", void 0);
 exports.MonsterNode = MonsterNode;
@@ -10267,18 +11108,20 @@ exports.MuzzleFlashNode = MuzzleFlashNode;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NpcNode = void 0;
 const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
-const Aseprite_1 = __webpack_require__(/*! ../../engine/assets/Aseprite */ "./lib/engine/assets/Aseprite.js");
 const CharacterNode_1 = __webpack_require__(/*! ./CharacterNode */ "./lib/main/nodes/CharacterNode.js");
 const Direction_1 = __webpack_require__(/*! ../../engine/geom/Direction */ "./lib/engine/geom/Direction.js");
 const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
 const Rect_1 = __webpack_require__(/*! ../../engine/geom/Rect */ "./lib/engine/geom/Rect.js");
 class NpcNode extends CharacterNode_1.CharacterNode {
-    constructor(female, args) {
-        super(Object.assign({ aseprite: female ? NpcNode.femaleSprite : NpcNode.maleSprite, anchor: Direction_1.Direction.BOTTOM, childAnchor: Direction_1.Direction.CENTER, tag: "idle", id: "player", sourceBounds: new Rect_1.Rect(6, 6, 8, 26) }, args));
+    constructor(spriteIndex, args) {
+        super(Object.assign({ aseprite: NpcNode.sprites[spriteIndex] ? NpcNode.sprites[spriteIndex] : NpcNode.sprites[0], anchor: Direction_1.Direction.BOTTOM, childAnchor: Direction_1.Direction.CENTER, tag: "idle", id: "player", sourceBounds: new Rect_1.Rect(6, 10, 8, 26) }, args));
         // Character settings
         this.acceleration = 600;
         this.deceleration = 800;
         this.jumpPower = 295;
+    }
+    unstuck() {
+        return this;
     }
     getShootingRange() {
         return 1;
@@ -10306,13 +11149,16 @@ class NpcNode extends CharacterNode_1.CharacterNode {
     }
 }
 tslib_1.__decorate([
-    Assets_1.asset("sprites/male.aseprite.json"),
-    tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
-], NpcNode, "maleSprite", void 0);
-tslib_1.__decorate([
-    Assets_1.asset("sprites/female.aseprite.json"),
-    tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
-], NpcNode, "femaleSprite", void 0);
+    Assets_1.asset([
+        "sprites/male.aseprite.json",
+        "sprites/female.aseprite.json",
+        "sprites/male2.aseprite.json",
+        "sprites/male3.aseprite.json",
+        "sprites/female2.aseprite.json",
+        "sprites/female3.aseprite.json"
+    ]),
+    tslib_1.__metadata("design:type", Array)
+], NpcNode, "sprites", void 0);
 exports.NpcNode = NpcNode;
 
 
@@ -10543,6 +11389,9 @@ const Rect_1 = __webpack_require__(/*! ../../engine/geom/Rect */ "./lib/engine/g
 const MuzzleFlashNode_1 = __webpack_require__(/*! ./MuzzleFlashNode */ "./lib/main/nodes/MuzzleFlashNode.js");
 const AmbientPlayerNode_1 = __webpack_require__(/*! ./player/AmbientPlayerNode */ "./lib/main/nodes/player/AmbientPlayerNode.js");
 const TrainNode_1 = __webpack_require__(/*! ./TrainNode */ "./lib/main/nodes/TrainNode.js");
+const HealthNode_1 = __webpack_require__(/*! ./player/HealthNode */ "./lib/main/nodes/player/HealthNode.js");
+const AsepriteNode_1 = __webpack_require__(/*! ../../engine/scene/AsepriteNode */ "./lib/engine/scene/AsepriteNode.js");
+const DeadSpaceSuiteNode_1 = __webpack_require__(/*! ./DeadSpaceSuiteNode */ "./lib/main/nodes/DeadSpaceSuiteNode.js");
 const groundColors = [
     "#806057",
     "#504336",
@@ -10571,7 +11420,10 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
         this.shotDelay = 0.2;
         this.magazineSize = 12;
         this.reloadDelay = 2200;
+        this.timeoutForRecover = 3000;
         this.leftMouseDown = false;
+        this.rightMouseDown = false;
+        this.lastHitTimestamp = 0;
         this.removeOnDie = false;
         this.playerArm = new PlayerArmNode_1.PlayerArmNode();
         this.playerLeg = new PlayerLegsNode_1.PlayerLegsNode();
@@ -10582,13 +11434,17 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
             anchor: Direction_1.Direction.TOP_RIGHT,
             layer: constants_1.Layer.HUD
         });
+        this.health = new HealthNode_1.HealthNode({
+            font: PlayerNode.font,
+            anchor: Direction_1.Direction.TOP,
+            layer: constants_1.Layer.HUD
+        });
         this.appendChild(this.playerLeg);
         this.appendChild(this.playerArm);
         const ambientPlayerLight = new AmbientPlayerNode_1.AmbientPlayerNode();
         (_a = this.playerLeg) === null || _a === void 0 ? void 0 : _a.appendChild(ambientPlayerLight);
         (_b = this.playerArm) === null || _b === void 0 ? void 0 : _b.appendChild(this.flashLight);
         (_c = this.flashLight) === null || _c === void 0 ? void 0 : _c.appendChild(this.muzzleFlash);
-        this.setupMouseKeyHandlers();
         window["player"] = this;
         this.dustParticles = new ParticleNode_1.ParticleNode({
             y: this.getHeight() / 2,
@@ -10599,6 +11455,11 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
             lifetime: () => random_1.rnd(0.5, 0.8),
             alphaCurve: ParticleNode_1.valueCurves.trapeze(0.05, 0.2)
         }).appendTo(this);
+        this.crosshairNode = new AsepriteNode_1.AsepriteNode({
+            aseprite: PlayerNode.crossHairSprite,
+            tag: "idle",
+            layer: constants_1.Layer.HUD
+        });
     }
     get aimingAngleNonNegative() {
         return -this.aimingAngle + Math.PI / 2;
@@ -10609,7 +11470,7 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
     getSpeed() {
         var _a;
         // TODO remove before publishing
-        return this.speed * (((_a = this.getScene()) === null || _a === void 0 ? void 0 : _a.keyboard.isPressed("Shift")) ? 4 : 1);
+        return this.speed * (((_a = this.getScene()) === null || _a === void 0 ? void 0 : _a.keyboard.isPressed("Shift")) ? 2.4 : 1.2);
     }
     getAcceleration() {
         return this.acceleration;
@@ -10629,23 +11490,38 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
     getLastShotTime() {
         return this.lastShotTime;
     }
+    getHitpoints() {
+        return this.hitpoints;
+    }
     update(dt, time) {
+        var _a, _b, _c;
         super.update(dt, time);
         if (!this.ammoCounter.isInScene() && env_1.isDev()) {
             const rootNode = this.getGame().getGameScene().rootNode;
             this.ammoCounter.setX(rootNode.getWidth() - 10);
             this.ammoCounter.setY(10);
+            this.health.setX(rootNode.getWidth() / 2);
+            this.health.setY(10);
             rootNode.appendChild(this.ammoCounter);
+            rootNode.appendChild(this.health);
         }
         if (!this.isAlive()) {
             this.setDirection(0);
+            this.crosshairNode.hide();
             return;
         }
         if (this.getParent() instanceof TrainNode_1.TrainNode) {
             this.setOpacity(0);
+            const door = this.getGame().getTrainDoorCoordinate();
+            const parent = (_a = this.getParent()) === null || _a === void 0 ? void 0 : _a.getScenePosition();
+            this.setX(door.x - ((_b = parent === null || parent === void 0 ? void 0 : parent.x) !== null && _b !== void 0 ? _b : 0));
+            this.setY(door.y - ((_c = parent === null || parent === void 0 ? void 0 : parent.y) !== null && _c !== void 0 ? _c : 0) + 40);
+            this.crosshairNode.hide();
             return;
         }
+        this.crosshairNode.show();
         this.setOpacity(1);
+        this.updateCrosshair();
         // Controls
         const input = this.getScene().game.input;
         // Move left/right
@@ -10664,9 +11540,12 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
             PlayerNode.footsteps.stop(0.3);
         }
         // Reload
-        if (this.canInteract(ControllerIntent_1.ControllerIntent.PLAYER_RELOAD)) {
+        if (this.canInteract(ControllerIntent_1.ControllerIntent.PLAYER_RELOAD) || this.rightMouseDown) {
+            this.rightMouseDown = false;
             this.reload();
         }
+        this.syncArmAndLeg();
+        this.recover();
         // Shoot
         if (this.canInteract(ControllerIntent_1.ControllerIntent.PLAYER_ACTION) || this.leftMouseDown) {
             this.leftMouseDown = false;
@@ -10682,11 +11561,6 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
                 node.interact();
             }
         }
-        // Battlemode
-        if (this.battlemode) {
-            this.getScene().game.canvas.style.cursor = "none";
-        }
-        this.syncArmAndLeg();
         // Spawn random dust particles while walking
         if (this.isVisible()) {
             if (this.getTag() === "walk") {
@@ -10696,6 +11570,9 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
             }
         }
         this.updatePreviouslyPressed();
+    }
+    setAmmoToFull() {
+        this.ammo = this.magazineSize;
     }
     updatePreviouslyPressed() {
         const input = this.getGame().input;
@@ -10717,7 +11594,7 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
             this.lastShotTime = time_1.now();
             this.ammo--;
             this.muzzleFlash.fire();
-            super.shoot(this.aimingAngleNonNegative, 35, this.flashLight.getScenePosition());
+            super.shoot(this.aimingAngleNonNegative, 35, this.muzzleFlash.getScenePosition());
         }
     }
     reload() {
@@ -10806,13 +11683,25 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
         }
         (_b = this.playerLeg) === null || _b === void 0 ? void 0 : _b.setMirrorX(this.direction === 0 ? this.isMirrorX() : (this.direction === -1));
     }
+    recover() {
+        if (this.isAlive() && this.hitpoints < 100 && time_1.now() - this.lastHitTimestamp > this.timeoutForRecover) {
+            this.hitpoints++;
+        }
+    }
+    hurt(damage, origin) {
+        this.lastHitTimestamp = time_1.now();
+        const { centerX, centerY } = this.getSceneBounds();
+        this.emitBlood(centerX, centerY, Math.random() * Math.PI * 2, damage);
+        return super.hurt(damage, origin);
+    }
     die() {
-        var _a;
+        var _a, _b;
         super.die();
+        (_a = this.playerArm) === null || _a === void 0 ? void 0 : _a.hide();
         PlayerNode.dieScream.stop();
         PlayerNode.dieScream.play();
         // Slow fade out, then play as different character
-        const camera = (_a = this.getGame().scenes.getScene(GameScene_1.GameScene)) === null || _a === void 0 ? void 0 : _a.camera;
+        const camera = (_b = this.getGame().scenes.getScene(GameScene_1.GameScene)) === null || _b === void 0 ? void 0 : _b.camera;
         if (camera) {
             const fader = camera.fadeToBlack;
             fader.fadeOut({ duration: 6 });
@@ -10821,15 +11710,25 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
                 scale: 4,
                 rotation: Math.PI * 2
             }).then(() => {
+                var _a;
                 // Reset camera
                 camera.setZoom(1);
                 camera.setRotation(0);
                 fader.fadeIn({ duration: 3 });
-                // TODO Leave corpse in place
+                new DeadSpaceSuiteNode_1.DeadSpaceSuitNode({
+                    x: this.getX(),
+                    y: this.getY(),
+                    layer: this.getLayer(),
+                }).insertBefore(this);
                 // TODO Jump to dialog sequence in train
-                this.getGame().spawnNewPlayer();
+                this.getGame().startRespawnSequence();
+                (_a = this.playerArm) === null || _a === void 0 ? void 0 : _a.show();
             });
         }
+    }
+    reset() {
+        super.reset();
+        this.ammo = 12;
     }
     getPersonalEnemies() {
         var _a, _b, _c, _d;
@@ -10842,33 +11741,51 @@ class PlayerNode extends CharacterNode_1.CharacterNode {
         this.debug = debug;
     }
     handlePointerMove(event) {
+        this.crosshairNode.moveTo(event.getScreenX(), event.getScreenY());
         this.aimingAngle = new Vector2_1.Vector2(event.getX(), event.getY())
             .sub(this.playerArm ? this.playerArm.getScenePosition() : this.getScenePosition())
             .getAngle();
     }
+    handlePointerDown(event) {
+        if (event.getButton() === 0) {
+            this.leftMouseDown = true;
+            event.onPointerEnd.connect(() => {
+                this.leftMouseDown = false;
+            });
+        }
+        else if (event.getButton() === 2) {
+            this.rightMouseDown = true;
+            event.onPointerEnd.connect(() => {
+                this.rightMouseDown = false;
+            });
+        }
+    }
     activate() {
-        var _a;
+        var _a, _b;
+        this.crosshairNode.appendTo(this.getScene().rootNode);
         (_a = this.getScene()) === null || _a === void 0 ? void 0 : _a.onPointerMove.connect(this.handlePointerMove, this);
+        (_b = this.getScene()) === null || _b === void 0 ? void 0 : _b.onPointerDown.connect(this.handlePointerDown, this);
+        this.getGame().canvas.style.cursor = "none";
     }
     deactivate() {
-        var _a;
+        var _a, _b;
+        this.getGame().canvas.style.cursor = "";
         (_a = this.getScene()) === null || _a === void 0 ? void 0 : _a.onPointerMove.disconnect(this.handlePointerMove, this);
+        (_b = this.getScene()) === null || _b === void 0 ? void 0 : _b.onPointerDown.disconnect(this.handlePointerDown, this);
+        this.crosshairNode.remove();
     }
-    endBattlemode() {
-        super.endBattlemode();
-        this.getGame().canvas.style.cursor = "crosshair";
-    }
-    setupMouseKeyHandlers() {
-        window.addEventListener("mousedown", event => {
-            if (event.button === 0) {
-                this.leftMouseDown = true;
-            }
-        });
-        window.addEventListener("mouseup", event => {
-            if (event.button === 0) {
-                this.leftMouseDown = false;
-            }
-        });
+    updateCrosshair() {
+        let tag = "idle";
+        if (this.isReloading) {
+            tag = "reload";
+        }
+        else if (this.ammo === 0) {
+            tag = "empty";
+        }
+        else if (this.battlemode) {
+            tag = "battle";
+        }
+        this.crosshairNode.setTag(tag);
     }
 }
 tslib_1.__decorate([
@@ -10895,6 +11812,10 @@ tslib_1.__decorate([
     Assets_1.asset("sprites/spacesuitbody.aseprite.json"),
     tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
 ], PlayerNode, "sprite", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sprites/crosshair.aseprite.json"),
+    tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
+], PlayerNode, "crossHairSprite", void 0);
 exports.PlayerNode = PlayerNode;
 
 
@@ -10922,6 +11843,7 @@ const random_1 = __webpack_require__(/*! ../../engine/util/random */ "./lib/engi
 class RatNode extends EnemyNode_1.EnemyNode {
     constructor(args) {
         super(Object.assign({ aseprite: RatNode.sprite, anchor: Direction_1.Direction.BOTTOM, tag: "idle", sourceBounds: new Rect_1.Rect(3, 6, 8, 4) }, args));
+        this.squeakSound = RatNode.ratSoundAttack.shallowClone();
         /** minimum distance between enemy and player to stop escaping */
         this.squaredSafetyDistance = Math.pow(100, 2);
         this.moveTimeMin = 0.3;
@@ -10971,11 +11893,10 @@ class RatNode extends EnemyNode_1.EnemyNode {
             this.moveTs = time;
             this.moveDelay = random_1.rnd(this.moveTimeMin, this.moveTimeMax);
         }
-        if (this.getDistanceToPlayerSquared() < this.squaredSafetyDistance) {
+        if (this.getDistanceToPlayerSquared() < this.squaredSafetyDistance || this.canSeeOrHearPlayer()) {
             this.escapeDistanceSquared = Math.pow(random_1.rnd(this.escapeDistanceMin, this.escapeDistanceMax), 2);
             this.setState(EnemyNode_1.AiState.ALERT);
-            this.stopSounds();
-            RatNode.ratSoundAttack.play();
+            this.squeak();
         }
     }
     updateAlert(time) {
@@ -10996,13 +11917,11 @@ class RatNode extends EnemyNode_1.EnemyNode {
         return player.getPosition().getSquareDistance(this.getPosition());
     }
     stopSounds() {
-        if (this.isSoundPlaying()) {
-            RatNode.ratSoundAttack.stop();
-            RatNode.ratSoundFollow.stop();
-        }
+        this.squeakSound.stop();
     }
-    isSoundPlaying() {
-        return RatNode.ratSoundAttack.isPlaying() || RatNode.ratSoundFollow.isPlaying();
+    squeak() {
+        this.stopSounds();
+        this.squeakSound.play();
     }
 }
 tslib_1.__decorate([
@@ -11013,11 +11932,57 @@ tslib_1.__decorate([
     Assets_1.asset("sounds/fx/ratSqueak.mp3"),
     tslib_1.__metadata("design:type", Sound_1.Sound)
 ], RatNode, "ratSoundAttack", void 0);
-tslib_1.__decorate([
-    Assets_1.asset("sounds/fx/ratSqueak2.mp3"),
-    tslib_1.__metadata("design:type", Sound_1.Sound)
-], RatNode, "ratSoundFollow", void 0);
 exports.RatNode = RatNode;
+
+
+/***/ }),
+
+/***/ "./lib/main/nodes/SpawnNode.js":
+/*!*************************************!*\
+  !*** ./lib/main/nodes/SpawnNode.js ***!
+  \*************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SpawnNode = void 0;
+const SceneNode_1 = __webpack_require__(/*! ../../engine/scene/SceneNode */ "./lib/engine/scene/SceneNode.js");
+const MonsterNode_1 = __webpack_require__(/*! ./MonsterNode */ "./lib/main/nodes/MonsterNode.js");
+class SpawnNode extends SceneNode_1.SceneNode {
+    constructor(args) {
+        var _a, _b, _c, _d, _e, _f;
+        super(Object.assign({}, args));
+        this.trigger = (_c = (_b = (_a = args === null || args === void 0 ? void 0 : args.tiledObject) === null || _a === void 0 ? void 0 : _a.getOptionalProperty("trigger", "string")) === null || _b === void 0 ? void 0 : _b.getValue()) !== null && _c !== void 0 ? _c : "";
+        this.hitpoints = (_f = (_e = (_d = args === null || args === void 0 ? void 0 : args.tiledObject) === null || _d === void 0 ? void 0 : _d.getOptionalProperty("hitpoints", "int")) === null || _e === void 0 ? void 0 : _e.getValue()) !== null && _f !== void 0 ? _f : 0;
+    }
+    getTrigger() {
+        return this.trigger;
+    }
+    spawnEnemy() {
+        var _a;
+        const enemy = new MonsterNode_1.MonsterNode({
+            x: this.x,
+            y: this.y
+        });
+        if (this.hitpoints > 0) {
+            enemy.setHitpoints(this.hitpoints);
+        }
+        (_a = this.getParent()) === null || _a === void 0 ? void 0 : _a.appendChild(enemy);
+    }
+    static getForTrigger(sourceNode, trigger, exact = true) {
+        var _a, _b;
+        const allSpawns = (_b = (_a = sourceNode.getScene()) === null || _a === void 0 ? void 0 : _a.rootNode.getDescendantsByType(SpawnNode)) !== null && _b !== void 0 ? _b : [];
+        if (exact) {
+            return allSpawns.filter(spawn => spawn.getTrigger() === trigger);
+        }
+        else {
+            return allSpawns.filter(spawn => spawn.getTrigger().includes(trigger));
+        }
+    }
+}
+exports.SpawnNode = SpawnNode;
 
 
 /***/ }),
@@ -11041,23 +12006,35 @@ const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engi
 const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
 class SwitchNode extends InteractiveNode_1.InteractiveNode {
     constructor(_a) {
-        var { onlyOnce = false, onUpdate } = _a, args = tslib_1.__rest(_a, ["onlyOnce", "onUpdate"]);
-        super(Object.assign({ aseprite: SwitchNode.sprite, anchor: Direction_1.Direction.CENTER, tag: "off" }, args), "Press E to press switch");
+        var { onlyOnce = false, onUpdate, spriteHidden = false } = _a, args = tslib_1.__rest(_a, ["onlyOnce", "onUpdate", "spriteHidden"]);
+        super(Object.assign({ aseprite: spriteHidden ? SwitchNode.noSprite : SwitchNode.sprite, anchor: Direction_1.Direction.CENTER, tag: "off" }, args), "Press E to pull lever");
         this.turnedOn = false;
         this.stateChanges = 0;
         this.onlyOnce = onlyOnce;
         this.onUpdate = onUpdate;
     }
+    setOnUpdate(func) {
+        this.onUpdate = func;
+    }
+    setOnlyOnce(once) {
+        this.onlyOnce = once;
+    }
     interact() {
         if (this.canInteract()) {
-            SwitchNode.clickSound.stop();
-            SwitchNode.clickSound.play();
-            this.turnedOn = !this.turnedOn;
-            this.setTag(this.turnedOn ? "on" : "off");
-            if (this.onUpdate != null) {
-                this.onUpdate(this.turnedOn);
+            const newState = !this.turnedOn;
+            if (!this.onUpdate || this.onUpdate(newState) !== false) {
+                SwitchNode.clickSound.stop();
+                SwitchNode.clickSound.play();
+                this.turnedOn = newState;
+                this.setTag(this.turnedOn ? "on" : "off");
+                console.log(this, this.getTag(), this.turnedOn);
+                this.stateChanges++;
             }
-            this.stateChanges++;
+            else {
+                // Switch blocked
+                SwitchNode.stuckSound.stop();
+                SwitchNode.stuckSound.play();
+            }
         }
     }
     canInteract() {
@@ -11072,9 +12049,17 @@ tslib_1.__decorate([
     tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
 ], SwitchNode, "sprite", void 0);
 tslib_1.__decorate([
-    Assets_1.asset("sounds/fx/heavyLightSwitch.ogg"),
+    Assets_1.asset("sprites/empty.aseprite.json"),
+    tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
+], SwitchNode, "noSprite", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/breakerSwitch.ogg"),
     tslib_1.__metadata("design:type", Sound_1.Sound)
 ], SwitchNode, "clickSound", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/fx/stuck.ogg"),
+    tslib_1.__metadata("design:type", Sound_1.Sound)
+], SwitchNode, "stuckSound", void 0);
 exports.SwitchNode = SwitchNode;
 
 
@@ -11125,13 +12110,13 @@ function getAssetIndexForName(name) {
 class TiledSoundNode extends SoundNode_1.SoundNode {
     constructor(args) {
         var _a, _b, _c, _d, _e, _f, _g, _h, _j;
-        const range = (_c = (_b = (_a = args === null || args === void 0 ? void 0 : args.tiledObject) === null || _a === void 0 ? void 0 : _a.getOptionalProperty("range", "int")) === null || _b === void 0 ? void 0 : _b.getValue()) !== null && _c !== void 0 ? _c : 10;
-        const intensity = (_f = (_e = (_d = args === null || args === void 0 ? void 0 : args.tiledObject) === null || _d === void 0 ? void 0 : _d.getOptionalProperty("intensity", "int")) === null || _e === void 0 ? void 0 : _e.getValue()) !== null && _f !== void 0 ? _f : 1.0;
+        const range = (_c = (_b = (_a = args === null || args === void 0 ? void 0 : args.tiledObject) === null || _a === void 0 ? void 0 : _a.getOptionalProperty("range", "float")) === null || _b === void 0 ? void 0 : _b.getValue()) !== null && _c !== void 0 ? _c : 10.0;
+        const intensity = (_f = (_e = (_d = args === null || args === void 0 ? void 0 : args.tiledObject) === null || _d === void 0 ? void 0 : _d.getOptionalProperty("intensity", "float")) === null || _e === void 0 ? void 0 : _e.getValue()) !== null && _f !== void 0 ? _f : 1.0;
         const soundName = (_j = (_h = (_g = args === null || args === void 0 ? void 0 : args.tiledObject) === null || _g === void 0 ? void 0 : _g.getOptionalProperty("sound", "string")) === null || _h === void 0 ? void 0 : _h.getValue()) !== null && _j !== void 0 ? _j : "";
         const soundAssetIndex = getAssetIndexForName(soundName);
         let sound;
         if (soundAssetIndex !== -1) {
-            sound = TiledSoundNode.sounds[soundAssetIndex];
+            sound = TiledSoundNode.sounds[soundAssetIndex].shallowClone();
         }
         else {
             throw new Error(`Sound '${soundName}' could not be loaded`);
@@ -11216,6 +12201,67 @@ tslib_1.__decorate([
     tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
 ], TrainNode, "foregroundSprite", void 0);
 exports.TrainNode = TrainNode;
+
+
+/***/ }),
+
+/***/ "./lib/main/nodes/TriggerNode.js":
+/*!***************************************!*\
+  !*** ./lib/main/nodes/TriggerNode.js ***!
+  \***************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TriggerNode = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Aseprite_1 = __webpack_require__(/*! ../../engine/assets/Aseprite */ "./lib/engine/assets/Aseprite.js");
+const InteractiveNode_1 = __webpack_require__(/*! ./InteractiveNode */ "./lib/main/nodes/InteractiveNode.js");
+const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const SpawnNode_1 = __webpack_require__(/*! ./SpawnNode */ "./lib/main/nodes/SpawnNode.js");
+class TriggerNode extends InteractiveNode_1.InteractiveNode {
+    constructor(args) {
+        super(Object.assign({ aseprite: TriggerNode.sprite }, args), "");
+        this.triggered = false;
+    }
+    update(dt, time) {
+        super.update(dt, time);
+        const target = this.getTarget();
+        if (target && !this.triggered) {
+            this.trigger();
+        }
+    }
+    trigger() {
+        var _a;
+        this.triggered = true;
+        switch (this.getId()) {
+            case "fallDownTrigger":
+                this.spawnEnemies("firstEncounter");
+                break;
+            default:
+                this.spawnEnemies((_a = this.getId()) !== null && _a !== void 0 ? _a : "");
+        }
+    }
+    interact() { }
+    spawnEnemies(trigger) {
+        if (!trigger) {
+            return;
+        }
+        const spawns = SpawnNode_1.SpawnNode.getForTrigger(this, trigger, true);
+        spawns.forEach(s => s.spawnEnemy());
+    }
+    canInteract() {
+        return true;
+    }
+    draw(context) { }
+}
+tslib_1.__decorate([
+    Assets_1.asset("sprites/rat.aseprite.json"),
+    tslib_1.__metadata("design:type", Aseprite_1.Aseprite)
+], TriggerNode, "sprite", void 0);
+exports.TriggerNode = TriggerNode;
 
 
 /***/ }),
@@ -11392,6 +12438,29 @@ FlashlightNode.image = FlashlightNode.generateImage(200, 100);
 
 /***/ }),
 
+/***/ "./lib/main/nodes/player/HealthNode.js":
+/*!*********************************************!*\
+  !*** ./lib/main/nodes/player/HealthNode.js ***!
+  \*********************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.HealthNode = void 0;
+const TextNode_1 = __webpack_require__(/*! ../../../engine/scene/TextNode */ "./lib/engine/scene/TextNode.js");
+class HealthNode extends TextNode_1.TextNode {
+    update(dt, time) {
+        super.update(dt, time);
+        this.setText(`${this.getGame().getPlayer().getHitpoints()} / 100`);
+    }
+}
+exports.HealthNode = HealthNode;
+
+
+/***/ }),
+
 /***/ "./lib/main/nodes/player/PlayerArmNode.js":
 /*!************************************************!*\
   !*** ./lib/main/nodes/player/PlayerArmNode.js ***!
@@ -11455,6 +12524,75 @@ exports.PlayerLegsNode = PlayerLegsNode;
 
 /***/ }),
 
+/***/ "./lib/main/scenes/GameOverScene.js":
+/*!******************************************!*\
+  !*** ./lib/main/scenes/GameOverScene.js ***!
+  \******************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.GameOverScene = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Scene_1 = __webpack_require__(/*! ../../engine/scene/Scene */ "./lib/engine/scene/Scene.js");
+const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
+const TextNode_1 = __webpack_require__(/*! ../../engine/scene/TextNode */ "./lib/engine/scene/TextNode.js");
+const BitmapFont_1 = __webpack_require__(/*! ../../engine/assets/BitmapFont */ "./lib/engine/assets/BitmapFont.js");
+const Direction_1 = __webpack_require__(/*! ../../engine/geom/Direction */ "./lib/engine/geom/Direction.js");
+const ImageNode_1 = __webpack_require__(/*! ../../engine/scene/ImageNode */ "./lib/engine/scene/ImageNode.js");
+const ControllerIntent_1 = __webpack_require__(/*! ../../engine/input/ControllerIntent */ "./lib/engine/input/ControllerIntent.js");
+const FadeToBlackTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeToBlackTransition */ "./lib/engine/transitions/FadeToBlackTransition.js");
+const FadeTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeTransition */ "./lib/engine/transitions/FadeTransition.js");
+const TitleScene_1 = __webpack_require__(/*! ./TitleScene */ "./lib/main/scenes/TitleScene.js");
+class GameOverScene extends Scene_1.Scene {
+    constructor() {
+        super(...arguments);
+        this.imageNode = new ImageNode_1.ImageNode({ image: GameOverScene.image, anchor: Direction_1.Direction.TOP_LEFT });
+        this.textNode = new TextNode_1.TextNode({ font: GameOverScene.font, anchor: Direction_1.Direction.BOTTOM });
+    }
+    setup() {
+        this.inTransition = new FadeTransition_1.FadeTransition();
+        this.outTransition = new FadeToBlackTransition_1.FadeToBlackTransition({ duration: 0.5, exclusive: true });
+        this.imageNode.appendTo(this.rootNode);
+        this.textNode
+            .setText("PRESS ENTER TO RETURN TO MENU")
+            .moveTo(constants_1.GAME_WIDTH / 2, constants_1.GAME_HEIGHT - 64)
+            .appendTo(this.rootNode);
+    }
+    cleanup() {
+        this.rootNode.clear();
+    }
+    backToStart() {
+        this.game.scenes.setScene(TitleScene_1.TitleScene);
+    }
+    activate() {
+        this.game.input.onButtonPress.connect(this.handleButton, this);
+    }
+    deactivate() {
+        this.game.input.onButtonPress.disconnect(this.handleButton, this);
+    }
+    handleButton(event) {
+        if (event.intents & ControllerIntent_1.ControllerIntent.CONFIRM) {
+            this.backToStart();
+        }
+    }
+}
+tslib_1.__decorate([
+    Assets_1.asset(constants_1.STANDARD_FONT),
+    tslib_1.__metadata("design:type", BitmapFont_1.BitmapFont)
+], GameOverScene, "font", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("images/gameover-image.png"),
+    tslib_1.__metadata("design:type", HTMLImageElement)
+], GameOverScene, "image", void 0);
+exports.GameOverScene = GameOverScene;
+
+
+/***/ }),
+
 /***/ "./lib/main/scenes/GameScene.js":
 /*!**************************************!*\
   !*** ./lib/main/scenes/GameScene.js ***!
@@ -11487,9 +12625,11 @@ const MonsterNode_1 = __webpack_require__(/*! ../nodes/MonsterNode */ "./lib/mai
 const RatNode_1 = __webpack_require__(/*! ../nodes/RatNode */ "./lib/main/nodes/RatNode.js");
 const CorpseNode_1 = __webpack_require__(/*! ../nodes/CorpseNode */ "./lib/main/nodes/CorpseNode.js");
 const FuseboxNode_1 = __webpack_require__(/*! ../nodes/FuseboxNode */ "./lib/main/nodes/FuseboxNode.js");
-const SoundNode_1 = __webpack_require__(/*! ../../engine/scene/SoundNode */ "./lib/engine/scene/SoundNode.js");
-const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
 const TiledSoundNode_1 = __webpack_require__(/*! ../nodes/TiledSoundNode */ "./lib/main/nodes/TiledSoundNode.js");
+const FadeToBlackTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeToBlackTransition */ "./lib/engine/transitions/FadeToBlackTransition.js");
+const SpawnNode_1 = __webpack_require__(/*! ../nodes/SpawnNode */ "./lib/main/nodes/SpawnNode.js");
+const TriggerNode_1 = __webpack_require__(/*! ../nodes/TriggerNode */ "./lib/main/nodes/TriggerNode.js");
+const DeadSpaceSuiteNode_1 = __webpack_require__(/*! ../nodes/DeadSpaceSuiteNode */ "./lib/main/nodes/DeadSpaceSuiteNode.js");
 class GameScene extends Scene_1.Scene {
     constructor() {
         super(...arguments);
@@ -11506,10 +12646,14 @@ class GameScene extends Scene_1.Scene {
                 "corpse": CorpseNode_1.CorpseNode,
                 "powerswitch": SwitchNode_1.SwitchNode,
                 "fusebox": FuseboxNode_1.FuseboxNode,
-                "sound": TiledSoundNode_1.TiledSoundNode
+                "sound": TiledSoundNode_1.TiledSoundNode,
+                "enemySpawn": SpawnNode_1.SpawnNode,
+                "trigger": TriggerNode_1.TriggerNode,
+                "deadspacesuit": DeadSpaceSuiteNode_1.DeadSpaceSuitNode
             } });
     }
     setup() {
+        this.inTransition = new FadeToBlackTransition_1.FadeToBlackTransition({ duration: 2, delay: 1 });
         this.mapNode.moveTo(0, 0).appendTo(this.rootNode).transform(m => m.scale(1));
         const player = this.mapNode.getDescendantById("Player");
         this.camera.setFollow(player);
@@ -11520,10 +12664,9 @@ class GameScene extends Scene_1.Scene {
         // new SwitchNode({ onlyOnce: false, onUpdate: (state) => door.setLocked(!state) }).moveTo(1130, 380).appendTo(this.mapNode);
         // new SwitchNode({ onlyOnce: true }).moveTo(250, 380).appendTo(this.mapNode);
         // Test enemies
-        new MonsterNode_1.MonsterNode().moveTo(2400, 360).appendTo(this.mapNode);
-        new MonsterNode_1.MonsterNode().moveTo(2500, 360).appendTo(this.mapNode);
-        new MonsterNode_1.MonsterNode().moveTo(2800, 360).appendTo(this.mapNode);
-        new SoundNode_1.SoundNode({ sound: GameScene.ambientFanSound, range: 300, intensity: 0.2 }).moveTo(2430, 355).appendTo(this.mapNode);
+        // new MonsterNode().moveTo(2400, 360).appendTo(this.mapNode);
+        // new MonsterNode().moveTo(2500, 360).appendTo(this.mapNode);
+        // new MonsterNode().moveTo(2800, 360).appendTo(this.mapNode);
         if (env_1.isDev()) {
             this.rootNode.appendChild(new FpsCounterNode_1.FpsCounterNode({
                 font: GameScene.font,
@@ -11604,10 +12747,6 @@ tslib_1.__decorate([
     Assets_1.asset("map/hyperloopMap.tiledmap.json"),
     tslib_1.__metadata("design:type", TiledMap_1.TiledMap)
 ], GameScene, "map", void 0);
-tslib_1.__decorate([
-    Assets_1.asset("sounds/loops/loop_fan.mp3"),
-    tslib_1.__metadata("design:type", Sound_1.Sound)
-], GameScene, "ambientFanSound", void 0);
 exports.GameScene = GameScene;
 
 
@@ -11628,8 +12767,10 @@ const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js"
 const Scene_1 = __webpack_require__(/*! ../../engine/scene/Scene */ "./lib/engine/scene/Scene.js");
 const ProgressBarNode_1 = __webpack_require__(/*! ../../engine/scene/ProgressBarNode */ "./lib/engine/scene/ProgressBarNode.js");
 const TitleScene_1 = __webpack_require__(/*! ./TitleScene */ "./lib/main/scenes/TitleScene.js");
+const FadeTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeTransition */ "./lib/engine/transitions/FadeTransition.js");
 class LoadingScene extends Scene_1.Scene {
     setup() {
+        this.outTransition = new FadeTransition_1.FadeTransition();
         this.progressBar = new ProgressBarNode_1.ProgressBarNode({
             x: this.game.width >> 1,
             y: this.game.height >> 1
@@ -11640,8 +12781,9 @@ class LoadingScene extends Scene_1.Scene {
     }
     activate() {
         return tslib_1.__awaiter(this, void 0, void 0, function* () {
-            yield this.game.assets.load(this.updateProgress.bind(this));
-            this.game.scenes.setScene(TitleScene_1.TitleScene);
+            this.game.assets.load(this.updateProgress.bind(this)).then(() => {
+                this.game.scenes.setScene(TitleScene_1.TitleScene);
+            });
         });
     }
     updateProgress(total, loaded) {
@@ -11654,6 +12796,118 @@ class LoadingScene extends Scene_1.Scene {
     }
 }
 exports.LoadingScene = LoadingScene;
+
+
+/***/ }),
+
+/***/ "./lib/main/scenes/SuccessScene.js":
+/*!*****************************************!*\
+  !*** ./lib/main/scenes/SuccessScene.js ***!
+  \*****************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SuccessScene = void 0;
+const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
+const Scene_1 = __webpack_require__(/*! ../../engine/scene/Scene */ "./lib/engine/scene/Scene.js");
+const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
+const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
+const TextNode_1 = __webpack_require__(/*! ../../engine/scene/TextNode */ "./lib/engine/scene/TextNode.js");
+const BitmapFont_1 = __webpack_require__(/*! ../../engine/assets/BitmapFont */ "./lib/engine/assets/BitmapFont.js");
+const Direction_1 = __webpack_require__(/*! ../../engine/geom/Direction */ "./lib/engine/geom/Direction.js");
+const ImageNode_1 = __webpack_require__(/*! ../../engine/scene/ImageNode */ "./lib/engine/scene/ImageNode.js");
+const ControllerIntent_1 = __webpack_require__(/*! ../../engine/input/ControllerIntent */ "./lib/engine/input/ControllerIntent.js");
+const FadeToBlackTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeToBlackTransition */ "./lib/engine/transitions/FadeToBlackTransition.js");
+const FadeTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeTransition */ "./lib/engine/transitions/FadeTransition.js");
+const TitleScene_1 = __webpack_require__(/*! ./TitleScene */ "./lib/main/scenes/TitleScene.js");
+const MusicManager_1 = __webpack_require__(/*! ../MusicManager */ "./lib/main/MusicManager.js");
+const FxManager_1 = __webpack_require__(/*! ../FxManager */ "./lib/main/FxManager.js");
+class SuccessScene extends Scene_1.Scene {
+    constructor() {
+        super(...arguments);
+        this.imageNode = new ImageNode_1.ImageNode({ image: SuccessScene.image, anchor: Direction_1.Direction.TOP_LEFT });
+        this.creditNodes = [];
+        this.textNode = new TextNode_1.TextNode({ font: SuccessScene.font, anchor: Direction_1.Direction.RIGHT });
+    }
+    setup() {
+        this.inTransition = new FadeTransition_1.FadeTransition();
+        this.outTransition = new FadeToBlackTransition_1.FadeToBlackTransition({ duration: 0.5, exclusive: true });
+        this.imageNode.appendTo(this.rootNode);
+        this.buildCredits();
+        this.textNode
+            .setText("Press Enter to exit")
+            .moveTo(constants_1.GAME_WIDTH - 56, constants_1.GAME_HEIGHT - 64)
+            .appendTo(this.rootNode);
+        MusicManager_1.MusicManager.getInstance().loopTrack(3);
+        FxManager_1.FxManager.getInstance().stop();
+    }
+    buildCredits() {
+        const lineHeight = 12;
+        const lines = [
+            "Thank you for playing!",
+            "",
+            "This game was made for",
+            "Ludum Dare 47 in three days!",
+            "",
+            "",
+            "Credits",
+            "",
+            "Eduard But",
+            "Nico Hülscher",
+            "Stephanie Jahn",
+            "Benjamin Jung",
+            "Nils Kreutzer",
+            "Bastian Lang",
+            "Ranjit Mevius",
+            "Markus Over",
+            "Klaus Reimer",
+            "Vladimir Sakhovski",
+            "Christina Schneider",
+            "Lisa Tsakiris",
+            "Jennifer van Veen",
+            "Moritz Vieth",
+            "Matthias Wetter",
+        ];
+        lines.forEach((l, i) => {
+            this.creditNodes.push(new TextNode_1.TextNode({ font: SuccessScene.font, text: l, color: "white", anchor: Direction_1.Direction.TOP_LEFT }).moveTo(16, constants_1.GAME_HEIGHT + lineHeight * i).appendTo(this.rootNode));
+        });
+    }
+    update(dt, time) {
+        super.update(dt, time);
+        this.creditNodes.forEach(n => {
+            n.moveBy(0, -12 * dt);
+        });
+    }
+    cleanup() {
+        this.rootNode.clear();
+    }
+    backToStart() {
+        this.game.scenes.setScene(TitleScene_1.TitleScene);
+    }
+    activate() {
+        this.game.input.onButtonPress.connect(this.handleButton, this);
+    }
+    deactivate() {
+        this.game.input.onButtonPress.disconnect(this.handleButton, this);
+    }
+    handleButton(event) {
+        if (event.intents & ControllerIntent_1.ControllerIntent.CONFIRM) {
+            this.backToStart();
+        }
+    }
+}
+tslib_1.__decorate([
+    Assets_1.asset(constants_1.STANDARD_FONT),
+    tslib_1.__metadata("design:type", BitmapFont_1.BitmapFont)
+], SuccessScene, "font", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("images/success-image.png"),
+    tslib_1.__metadata("design:type", HTMLImageElement)
+], SuccessScene, "image", void 0);
+exports.SuccessScene = SuccessScene;
 
 
 /***/ }),
@@ -11671,29 +12925,29 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TitleScene = void 0;
 const tslib_1 = __webpack_require__(/*! tslib */ "./node_modules/tslib/tslib.js");
 const Scene_1 = __webpack_require__(/*! ../../engine/scene/Scene */ "./lib/engine/scene/Scene.js");
-const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
-const TextNode_1 = __webpack_require__(/*! ../../engine/scene/TextNode */ "./lib/engine/scene/TextNode.js");
-const BitmapFont_1 = __webpack_require__(/*! ../../engine/assets/BitmapFont */ "./lib/engine/assets/BitmapFont.js");
 const Assets_1 = __webpack_require__(/*! ../../engine/assets/Assets */ "./lib/engine/assets/Assets.js");
 const Direction_1 = __webpack_require__(/*! ../../engine/geom/Direction */ "./lib/engine/geom/Direction.js");
 const ImageNode_1 = __webpack_require__(/*! ../../engine/scene/ImageNode */ "./lib/engine/scene/ImageNode.js");
 const GameScene_1 = __webpack_require__(/*! ./GameScene */ "./lib/main/scenes/GameScene.js");
-const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
 const ControllerIntent_1 = __webpack_require__(/*! ../../engine/input/ControllerIntent */ "./lib/engine/input/ControllerIntent.js");
+const FadeToBlackTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeToBlackTransition */ "./lib/engine/transitions/FadeToBlackTransition.js");
+const MusicManager_1 = __webpack_require__(/*! ../MusicManager */ "./lib/main/MusicManager.js");
+const FadeTransition_1 = __webpack_require__(/*! ../../engine/transitions/FadeTransition */ "./lib/engine/transitions/FadeTransition.js");
+const constants_1 = __webpack_require__(/*! ../constants */ "./lib/main/constants.js");
+const Sound_1 = __webpack_require__(/*! ../../engine/assets/Sound */ "./lib/engine/assets/Sound.js");
+const SuccessScene_1 = __webpack_require__(/*! ./SuccessScene */ "./lib/main/scenes/SuccessScene.js");
 class TitleScene extends Scene_1.Scene {
     constructor() {
         super(...arguments);
         this.imageNode = new ImageNode_1.ImageNode({ image: TitleScene.titleImage, anchor: Direction_1.Direction.TOP_LEFT });
-        this.textNode = new TextNode_1.TextNode({ font: TitleScene.font, anchor: Direction_1.Direction.BOTTOM });
+        this.overlayImageNode = new ImageNode_1.ImageNode({ image: TitleScene.overlayImage, anchor: Direction_1.Direction.BOTTOM });
     }
     setup() {
+        this.inTransition = new FadeTransition_1.FadeTransition();
+        this.outTransition = new FadeToBlackTransition_1.FadeToBlackTransition({ duration: 0.5, exclusive: true });
         this.imageNode.appendTo(this.rootNode);
-        this.textNode
-            .setText("PRESS ENTER TO START")
-            .moveTo(constants_1.GAME_WIDTH / 2, constants_1.GAME_HEIGHT - 64)
-            .appendTo(this.rootNode);
-        TitleScene.bgm.setLoop(true);
-        TitleScene.bgm.play();
+        this.overlayImageNode.moveTo(constants_1.GAME_WIDTH / 2, constants_1.GAME_HEIGHT).appendTo(this.rootNode);
+        MusicManager_1.MusicManager.getInstance().loopTrack(0);
     }
     cleanup() {
         this.rootNode.clear();
@@ -11701,26 +12955,38 @@ class TitleScene extends Scene_1.Scene {
     startGame() {
         this.game.scenes.setScene(GameScene_1.GameScene);
     }
-    update(dt, time) {
-        super.update(dt, time);
-        const input = this.game.input;
-        if (input.currentActiveIntents & ControllerIntent_1.ControllerIntent.CONFIRM) {
+    gotoCredits() {
+        this.game.scenes.setScene(SuccessScene_1.SuccessScene);
+    }
+    activate() {
+        this.game.input.onButtonPress.connect(this.handleButton, this);
+    }
+    deactivate() {
+        this.game.input.onButtonPress.disconnect(this.handleButton, this);
+    }
+    handleButton(event) {
+        if (event.intents & ControllerIntent_1.ControllerIntent.CONFIRM) {
+            TitleScene.confirmSound.play();
             this.startGame();
+        }
+        if (event.intents & ControllerIntent_1.ControllerIntent.PLAYER_RELOAD) {
+            TitleScene.confirmSound.play();
+            this.gotoCredits();
         }
     }
 }
-tslib_1.__decorate([
-    Assets_1.asset(constants_1.STANDARD_FONT),
-    tslib_1.__metadata("design:type", BitmapFont_1.BitmapFont)
-], TitleScene, "font", void 0);
 tslib_1.__decorate([
     Assets_1.asset("images/title-image.png"),
     tslib_1.__metadata("design:type", HTMLImageElement)
 ], TitleScene, "titleImage", void 0);
 tslib_1.__decorate([
-    Assets_1.asset("music/01-riding-the-hyperloop.ogg"),
+    Assets_1.asset("images/start-overlay.png"),
+    tslib_1.__metadata("design:type", HTMLImageElement)
+], TitleScene, "overlayImage", void 0);
+tslib_1.__decorate([
+    Assets_1.asset("sounds/interface/ticket.ogg"),
     tslib_1.__metadata("design:type", Sound_1.Sound)
-], TitleScene, "bgm", void 0);
+], TitleScene, "confirmSound", void 0);
 exports.TitleScene = TitleScene;
 
 
